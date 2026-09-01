@@ -1,0 +1,27 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.17763.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Title>A Simple Mandelbrot generator in different languages</Title>
+    <Company>Eternal Developments, LLC</Company>
+    <Description>A Simeple Mandelbrot generator in net10, C++, and ISPC</Description>
+    <Copyright>Copyright Eternal Developments, LLC. All Rights Reserved.</Copyright>
+    <PackageTags>Mandelbrot;ISPC</PackageTags>
+    <RepositoryUrl>https://github.com/JohnJScott/Samples</RepositoryUrl>
+    <PackageReadmeFile>ReadMe.md</PackageReadmeFile>
+    <PackageProjectUrl>https://eternaldevelopments.com/</PackageProjectUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="ReadMe.md">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
+  </ItemGroup>
+
+</Project>
