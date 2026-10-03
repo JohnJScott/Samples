@@ -1,0 +1,1830 @@
+﻿/*
+	Clarity
+	Copyright (C) 2026 Joseph Pasfield
+
+	This program is free software: you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation, either version 3 of the License, or
+	(at your option) any later version.
+
+	This program is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
+
+	You should have received a copy of the GNU General Public License
+	along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+#include "globals.h"
+#include "corrhist.h"
+
+template bool Board::makeMove<false>( Move move );
+template void Board::undoMove<false>();
+template bool Board::makeMove<true>( Move move );
+template void Board::undoMove<true>();
+template void Board::addPiece<false>( int32_t square, int32_t type );
+template void Board::removePiece<false>( int32_t square, int32_t type );
+template void Board::movePiece<false>( int32_t square1, int32_t type1, int32_t square2, int32_t type2 );
+template void Board::addPiece<true>( int32_t square, int32_t type );
+template void Board::removePiece<true>( int32_t square, int32_t type );
+template void Board::movePiece<true>( int32_t square1, int32_t type1, int32_t square2, int32_t type2 );
+
+// zobrist hashing values 
+std::array<std::array<uint64_t, 14>, 64> zobTable;
+// if black is to move this value is xor'ed
+uint64_t zobColorToMove;
+
+// masks for caslting rights, used to update the castling rights faster after a rook or king move
+constexpr std::array<uint8_t, 64> rookRightMasks =
+{
+	0b1101,255,255,255,255,255,255,0b1110,
+	255,   255,255,255,255,255,255,   255,
+	255,   255,255,255,255,255,255,   255,
+	255,   255,255,255,255,255,255,   255,
+	255,   255,255,255,255,255,255,   255,
+	255,   255,255,255,255,255,255,   255,
+	255,   255,255,255,255,255,255,   255,
+	0b0111,255,255,255,255,255,255,0b1011
+};
+
+constexpr std::array<uint8_t, 2> kingRightMasks =
+{
+	0b0011, 0b1100
+};
+
+std::array<int32_t, 8> directionalOffsets =
+{
+	8, -8, 1, -1, 7, -7, 9, -9
+};
+
+const char* Board::GlyphForPiece( char fen_char ) const
+{
+	switch( fen_char )
+	{
+	case 'K':
+	{
+		return "\xE2\x99\x94";
+	}
+	case 'Q':
+	{
+		return "\xE2\x99\x95";
+	}
+	case 'R':
+	{
+		return "\xE2\x99\x96";
+	}
+	case 'B':
+	{
+		return "\xE2\x99\x97";
+	}
+	case 'N':
+	{
+		return "\xE2\x99\x98";
+	}
+	case 'P':
+	{
+		return "\xE2\x99\x99";
+	}
+	case 'k':
+	{
+		return "\xE2\x99\x9A";
+	}
+	case 'q':
+	{
+		return "\xE2\x99\x9B";
+	}
+	case 'r':
+	{
+		return "\xE2\x99\x9C";
+	}
+	case 'b':
+	{
+		return "\xE2\x99\x9D";
+	}
+	case 'n':
+	{
+		return "\xE2\x99\x9E";
+	}
+	case 'p':
+	{
+		return "\xE2\x99\x9F";
+	}
+	default:
+	{
+		return "\xC2\xB7";
+	}
+	}
+}
+
+void Board::displayLetters() const
+{
+	for( int32_t rank = 7; rank >= 0; rank-- )
+	{
+		std::cout << rank + 1 << " ";
+		for( int32_t file = 0; file < 8; file++ )
+		{
+			int32_t piece = pieceAtIndex( rank * 8 + file );
+			bool isBlack = ( getColor( piece ) == 0 );
+			int32_t pieceType = getType( piece );
+			char pieceChar;
+			switch( pieceType )
+			{
+			case Rook:
+				pieceChar = 'R';
+				break;
+			case Knight:
+				pieceChar = 'N';
+				break;
+			case Bishop:
+				pieceChar = 'B';
+				break;
+			case Queen:
+				pieceChar = 'Q';
+				break;
+			case King:
+				pieceChar = 'K';
+				break;
+			case Pawn:
+				pieceChar = 'P';
+				break;
+			default:
+				pieceChar = ' ';
+				break;
+			}
+
+			std::cout << static_cast< char >( isBlack ? tolower( pieceChar ) : pieceChar ) << " ";
+		}
+
+		std::cout << '\n';
+	}
+
+	std::cout << "  a b c d e f g h\n\n";
+}
+
+void Board::displayPieces() const
+{
+	for( int32_t rank = 7; rank >= 0; rank-- )
+	{
+		std::cout << rank + 1 << " ";
+		for( int32_t file = 0; file < 8; file++ )
+		{
+			int32_t piece = pieceAtIndex( rank * 8 + file );
+			int32_t pieceType = getType( piece );
+			int32_t color = getColor( piece );
+			const char* pieceChar;
+			switch( pieceType )
+			{
+			case Rook:
+				pieceChar = GlyphForPiece( ( color == EColor::WHITE ) ? 'R' : 'r' );
+				break;
+			case Knight:
+				pieceChar = GlyphForPiece( ( color == EColor::WHITE ) ? 'N' : 'n' );
+				break;
+			case Bishop:
+				pieceChar = GlyphForPiece( ( color == EColor::WHITE ) ? 'B' : 'b' );
+				break;
+			case Queen:
+				pieceChar = GlyphForPiece( ( color == EColor::WHITE ) ? 'Q' : 'q' );
+				break;
+			case King:
+				pieceChar = GlyphForPiece( ( color == EColor::WHITE ) ? 'K' : 'k' );
+				break;
+			case Pawn:
+				pieceChar = GlyphForPiece( ( color == EColor::WHITE ) ? 'P' : 'p' );
+				break;
+			default:
+				pieceChar = " ";
+				break;
+			}
+
+			std::cout << pieceChar << " ";
+		}
+
+		std::cout << "\n";
+	}
+
+	std::cout << "  a b c d e f g h\n\n";
+}
+
+void Board::toString()
+{
+	displayLetters();
+	displayPieces();
+
+	std::cout << "Ply count: " << std::to_string( plyCount ) << '\n';
+	std::cout << "Hash: " << std::to_string( stateHistory.back().zobristHash ) << '\n';
+	std::cout << "Castling rights: " << std::to_string( stateHistory.back().castlingRights & 1 ) << std::to_string( ( stateHistory.back().castlingRights >> 1 ) & 1 ) << std::to_string( ( stateHistory.back().castlingRights >> 2 ) & 1 ) << std::to_string( ( stateHistory.back().castlingRights >> 3 ) & 1 ) << '\n';
+	if( stateHistory.back().enPassantIndex == 64 )
+	{
+		std::cout << "En passant square: none\n";
+	}
+	else
+	{
+		std::cout << "En passant square: " << squareNames[stateHistory.back().enPassantIndex] << '\n';
+	}
+
+	std::cout << "Color to move: " << ( colorToMove == 0 ? "black" : "white" ) << '\n';
+	std::cout << "Evaluation: " << std::to_string( getEvaluation() ) << '\n';
+}
+
+Board::Board( std::string fen )
+{
+	stateHistory.clear();
+	stateHistory.reserve( 256 );
+	stateHistory.emplace_back();
+	nnueState.reset();
+	stateHistory.back().zobristHash = 0;
+	stateHistory.back().pawnHash = 0;
+	stateHistory.back().nonPawnHashes[0] = 0;
+	stateHistory.back().nonPawnHashes[1] = 0;
+	stateHistory.back().majorHash = 0;
+	stateHistory.back().minorHash = 0;
+
+	for( int32_t i = 0; i < 64; i++ )
+	{
+		stateHistory.back().mailbox[i] = None;
+	}
+
+	for( int32_t i = 0; i < 6; i++ )
+	{
+		stateHistory.back().pieceBitboards[i] = 0ULL;
+	}
+
+	for( int32_t i = 0; i < 2; i++ )
+	{
+		stateHistory.back().coloredBitboards[i] = 0ULL;
+	}
+
+	// main board state, segment 1
+	std::vector<std::string> segments = split( fen, ' ' );
+	std::vector<std::string> ranks = split( segments[0], '/' );
+	std::ranges::reverse( ranks );
+	int32_t i = 0;
+	for( const std::string& rank : ranks )
+	{
+		for( char c : rank )
+		{
+			switch( c )
+			{
+			case 'p':
+				addPiece<false>( i, Pawn | Black );
+				i++;
+				break;
+			case 'P':
+				addPiece<false>( i, Pawn | White );
+				i++;
+				break;
+			case 'n':
+				addPiece<false>( i, Knight | Black );
+				i++;
+				break;
+			case 'N':
+				addPiece<false>( i, Knight | White );
+				i++;
+				break;
+			case 'b':
+				addPiece<false>( i, Bishop | Black );
+				i++;
+				break;
+			case 'B':
+				addPiece<false>( i, Bishop | White );
+				i++;
+				break;
+			case 'r':
+				addPiece<false>( i, Rook | Black );
+				i++;
+				break;
+			case 'R':
+				addPiece<false>( i, Rook | White );
+				i++;
+				break;
+			case 'q':
+				addPiece<false>( i, Queen | Black );
+				i++;
+				break;
+			case 'Q':
+				addPiece<false>( i, Queen | White );
+				i++;
+				break;
+			case 'k':
+				addPiece<false>( i, King | Black );
+				stateHistory.back().kingSquares[0] = static_cast<uint8_t>( i );
+				i++;
+				break;
+			case 'K':
+				addPiece<false>( i, King | White );
+				stateHistory.back().kingSquares[1] = static_cast<uint8_t>( i );
+				i++;
+				break;
+			default:
+				i += ( c - '0' );
+				break;
+			}
+		}
+	}
+	// convert color to move into 0 or 1, segment 2
+	colorToMove = ( segments[1] == "w" ? 1 : 0 );
+	if( colorToMove == 1 )
+	{
+		stateHistory.back().zobristHash ^= zobColorToMove;
+	}
+
+	// decode the castling rights into the 4 bit number, segment 3
+	stateHistory.back().castlingRights = 0;
+	for( char c : segments[2] )
+	{
+		if( c == 'K' )
+		{
+			stateHistory.back().castlingRights |= 1;
+		}
+		else if( c == 'Q' )
+		{
+			stateHistory.back().castlingRights |= 2;
+		}
+		else if( c == 'k' )
+		{
+			stateHistory.back().castlingRights |= 4;
+		}
+		else if( c == 'q' )
+		{
+			stateHistory.back().castlingRights |= 8;
+		}
+	}
+
+	// decode the en passant index, segment 4
+	if( segments[3] != "-" )
+	{
+		i = 0;
+		int32_t num = 0;
+		for( char c : segments[3] )
+		{
+			if( i == 0 )
+			{
+				num += ( c - 'a' );
+			}
+			else
+			{
+				num += ( ( c - '1' ) * 8 );
+			}
+			i++;
+		}
+		stateHistory.back().enPassantIndex = static_cast<uint8_t>( num );
+	}
+	else
+	{
+		stateHistory.back().enPassantIndex = 64;
+	}
+
+	// 50 move counter, segment 5
+	stateHistory.back().hundredPlyCounter = 0;
+	// ply count, segment 6
+	plyCount = std::stoi( segments[5] ) * 2 - colorToMove;
+	nnueState.refreshAccumulator( EColor::BLACK, stateHistory.back(), stateHistory.back().kingSquares[0] );
+	nnueState.refreshAccumulator( EColor::WHITE, stateHistory.back(), stateHistory.back().kingSquares[1] );
+	stateHistory.back().threats = calculateThreats();
+}
+
+std::string Board::getFenString() const
+{
+	// essentially copy and pasted from my c# engine lol
+	std::string fen = "";
+	for( int32_t rank = 7; rank >= 0; rank-- )
+	{
+		int32_t numEmptyFiles = 0;
+		for( int32_t file = 0; file < 8; file++ )
+		{
+			int32_t piece = pieceAtIndex( 8 * rank + file );
+			if( piece != None )
+			{
+				if( numEmptyFiles != 0 )
+				{
+					fen += std::to_string( numEmptyFiles );
+					numEmptyFiles = 0;
+				}
+
+				bool isBlack = getColor( piece ) == 0;
+				int32_t pieceType = getType( piece );
+				char pieceChar = ' ';
+				switch( pieceType )
+				{
+				case Rook:
+					pieceChar = 'R';
+					break;
+				case Knight:
+					pieceChar = 'N';
+					break;
+				case Bishop:
+					pieceChar = 'B';
+					break;
+				case Queen:
+					pieceChar = 'Q';
+					break;
+				case King:
+					pieceChar = 'K';
+					break;
+				case Pawn:
+					pieceChar = 'P';
+					break;
+				default:
+					assert( false );
+					break;
+				}
+
+				fen += isBlack ? static_cast<char>( std::tolower( pieceChar ) ) : pieceChar;
+			}
+			else
+			{
+				numEmptyFiles++;
+			}
+
+		}
+
+		if( numEmptyFiles != 0 )
+		{
+			fen += std::to_string( numEmptyFiles );
+		}
+
+		if( rank != 0 )
+		{
+			fen += '/';
+		}
+	}
+
+	// color to move
+	fen += ' ';
+	fen += ( colorToMove == 0 ? 'b' : 'w' );
+	// castling rights
+	fen += ' ';
+	bool thingAdded = false;
+	if( ( stateHistory.back().castlingRights & 1 ) != 0 )
+	{
+		fen += 'K';
+		thingAdded = true;
+	}
+
+	if( ( stateHistory.back().castlingRights & 2 ) != 0 )
+	{
+		fen += 'Q';
+		thingAdded = true;
+	}
+
+	if( ( stateHistory.back().castlingRights & 4 ) != 0 )
+	{
+		fen += 'k';
+		thingAdded = true;
+	}
+
+	if( ( stateHistory.back().castlingRights & 8 ) != 0 )
+	{
+		fen += 'q';
+		thingAdded = true;
+	}
+
+	if( thingAdded == false )
+	{
+		fen += '-';
+	}
+
+	// en passant square
+	fen += ' ';
+	if( stateHistory.back().enPassantIndex == 64 )
+	{
+		fen += '-';
+	}
+	else
+	{
+		fen += squareNames[stateHistory.back().enPassantIndex];
+	}
+
+	// 50 move counter
+	fen += ' ';
+	fen += std::to_string( stateHistory.back().hundredPlyCounter / 2 );
+	// ply count
+	fen += ' ';
+	fen += std::to_string( plyCount / 2 + colorToMove );
+	return fen;
+}
+
+template <bool UpdateNNUE> void Board::addPiece( int32_t square, int32_t type )
+{
+	assert( type != None );
+	assert( square < 64 );
+	assert( pieceAtIndex( square ) == None );
+	assert( square >= 0 );
+
+	const uint64_t bitboardSquare = squareToBitboard[square];
+	//std::cout << "Adding piece of type " << std::to_string(type) << " at index " << std::to_string(square) << '\n';
+	stateHistory.back().coloredBitboards[getColor( type )] ^= bitboardSquare;
+	stateHistory.back().pieceBitboards[getType( type )] ^= bitboardSquare;
+	stateHistory.back().mailbox[square] = static_cast<uint8_t>( type );
+	assert( pieceAtIndex( square ) == type );
+	if constexpr( UpdateNNUE )
+	{
+		nnueState.activateFeature( square, type, stateHistory.back().kingSquares[0], stateHistory.back().kingSquares[1] );
+	}
+
+	stateHistory.back().zobristHash ^= zobTable[square][type];
+	if( getType( type ) == Pawn )
+	{
+		stateHistory.back().pawnHash ^= zobTable[square][type];
+	}
+	else
+	{
+		stateHistory.back().nonPawnHashes[getColor( type )] ^= zobTable[square][type];
+		if( getType( type ) == Queen || getType( type ) == Rook )
+		{
+			stateHistory.back().majorHash ^= zobTable[square][type];
+		}
+		else if( getType( type ) != King )
+		{
+			stateHistory.back().minorHash ^= zobTable[square][type];
+		}
+	}
+}
+
+template <bool UpdateNNUE> void Board::removePiece( int32_t square, int32_t type )
+{
+	assert( type != None );
+	assert( square < 64 );
+	assert( pieceAtIndex( square ) == type );
+	assert( square >= 0 );
+	const uint64_t bitboardSquare = squareToBitboard[square];
+	stateHistory.back().coloredBitboards[getColor( type )] ^= bitboardSquare;
+	stateHistory.back().pieceBitboards[getType( type )] ^= bitboardSquare;
+	stateHistory.back().mailbox[square] = None;
+	if constexpr( UpdateNNUE )
+	{
+		nnueState.disableFeature( square, type, stateHistory.back().kingSquares[0], stateHistory.back().kingSquares[1] );
+	}
+
+	stateHistory.back().zobristHash ^= zobTable[square][type];
+	if( getType( type ) == Pawn )
+	{
+		stateHistory.back().pawnHash ^= zobTable[square][type];
+	}
+	else
+	{
+		stateHistory.back().nonPawnHashes[getColor( type )] ^= zobTable[square][type];
+		if( getType( type ) == Queen || getType( type ) == Rook )
+		{
+			stateHistory.back().majorHash ^= zobTable[square][type];
+		}
+		else if( getType( type ) != King )
+		{
+			stateHistory.back().minorHash ^= zobTable[square][type];
+		}
+	}
+	assert( pieceAtIndex( square ) == None );
+}
+
+template <bool UpdateNNUE> void Board::movePiece( int32_t square1, int32_t type1, int32_t square2, int32_t type2 )
+{
+	assert( type1 != None );
+	assert( square1 < 64 );
+	assert( square2 < 64 );
+	if( type2 != None )
+	{
+		removePiece<UpdateNNUE>( square2, type2 );
+	}
+
+	addPiece<UpdateNNUE>( square2, type1 );
+	removePiece<UpdateNNUE>( square1, type1 );
+}
+
+int32_t Board::pieceAtIndex( int32_t index ) const
+{
+	return stateHistory.back().mailbox[index];
+}
+
+int32_t Board::colorAtIndex( int32_t index ) const
+{
+	return stateHistory.back().mailbox[index] == None ? 2 : getColor( stateHistory.back().mailbox[index] );
+}
+
+uint64_t Board::getColoredPieceBitboard( int32_t color, int32_t piece ) const
+{
+	return stateHistory.back().pieceBitboards[piece] & stateHistory.back().coloredBitboards[color];
+}
+
+uint64_t Board::getOccupiedBitboard() const
+{
+	return stateHistory.back().coloredBitboards[0] | stateHistory.back().coloredBitboards[1];
+}
+
+// fills up the array and then returns the number of moves to be looped through later.
+int32_t Board::getMoves( std::array<Move, 256>& moves ) const
+{
+	uint64_t occupiedBitboard = getOccupiedBitboard();
+	int32_t totalMoves = 0;
+
+	// castling
+	if( ( stateHistory.back().castlingRights & kingRightMasks[1 - colorToMove] ) != 0 )
+	{
+		if( !isInCheck() )
+		{
+			if( colorToMove == 1 )
+			{
+				if( ( stateHistory.back().castlingRights & 1 ) != 0 && ( occupiedBitboard & 0x60 ) == 0 && !squareIsUnderAttack( 5 ) )
+				{
+					moves[totalMoves] = Move( 4, 6, castling[0] );
+					totalMoves++;
+				}
+				if( ( stateHistory.back().castlingRights & 2 ) != 0 && ( occupiedBitboard & 0xE ) == 0 && !squareIsUnderAttack( 3 ) )
+				{
+					moves[totalMoves] = Move( 4, 2, castling[1] );
+					totalMoves++;
+				}
+			}
+			else
+			{
+				if( ( stateHistory.back().castlingRights & 4 ) != 0 && ( occupiedBitboard & 0x6000000000000000 ) == 0 && !squareIsUnderAttack( 61 ) )
+				{
+					moves[totalMoves] = Move( 60, 62, castling[2] );
+					totalMoves++;
+				}
+				if( ( stateHistory.back().castlingRights & 8 ) != 0 && ( occupiedBitboard & 0xE00000000000000 ) == 0 && !squareIsUnderAttack( 59 ) )
+				{
+					moves[totalMoves] = Move( 60, 58, castling[3] );
+					totalMoves++;
+				}
+			}
+		}
+	}
+
+	uint64_t mask = stateHistory.back().coloredBitboards[colorToMove] ^ getColoredPieceBitboard( colorToMove, Pawn );
+	// the rest of the pieces
+	while( mask != 0 )
+	{
+		uint8_t startSquare = static_cast<uint8_t>( popLSB( mask ) );
+		uint8_t currentType = static_cast< uint8_t >( getType( pieceAtIndex( startSquare ) ) );
+		uint64_t total = 0;
+		if( currentType == Knight )
+		{
+			total = getKnightAttacks( startSquare );
+		}
+		else if( currentType == Bishop )
+		{
+			total = getBishopAttacks( startSquare, occupiedBitboard );
+		}
+		else if( currentType == Rook )
+		{
+			total = getRookAttacks( startSquare, occupiedBitboard );
+		}
+		else if( currentType == Queen )
+		{
+			total = getRookAttacks( startSquare, occupiedBitboard ) | getBishopAttacks( startSquare, occupiedBitboard );
+		}
+		else if( currentType == King )
+		{
+			total = getKingAttacks( startSquare );
+		}
+
+		// get rid of capturing your own pieces
+		total ^= ( total & stateHistory.back().coloredBitboards[colorToMove] );
+		while( total != 0 )
+		{
+			moves[totalMoves] = Move( startSquare, popLSB( total ), Normal );
+			totalMoves++;
+		}
+	}
+	// pawn pushes
+	uint64_t pawnBitboard = getColoredPieceBitboard( colorToMove, Pawn );
+	uint64_t emptyBitboard = ~occupiedBitboard;
+	uint64_t pawnPushes = getPawnPushes( pawnBitboard, emptyBitboard, colorToMove );
+	uint64_t doublePawnPushes = getDoublePawnPushes( pawnPushes, emptyBitboard, colorToMove );
+	uint64_t pawnPushPromotions = pawnPushes & getRankMask( 7 * colorToMove );
+	pawnPushes ^= pawnPushPromotions;
+	while( pawnPushes != 0 )
+	{
+		uint8_t index = static_cast< uint8_t >( popLSB( pawnPushes ) );
+		uint8_t startSquare = static_cast< uint8_t >( ( index + directionalOffsets[colorToMove] ) );
+		moves[totalMoves] = Move( startSquare, index, Normal );
+		totalMoves++;
+	}
+
+	while( doublePawnPushes != 0 )
+	{
+		uint8_t index = static_cast< uint8_t >( popLSB( doublePawnPushes ));
+		uint8_t startSquare = static_cast< uint8_t >( ( index + ( directionalOffsets[colorToMove] * 2 ) ));
+		assert( getType( pieceAtIndex( startSquare ) ) == Pawn );
+		moves[totalMoves] = Move( startSquare, index, DoublePawnPush );
+		totalMoves++;
+	}
+
+	while( pawnPushPromotions != 0 )
+	{
+		uint8_t index = static_cast< uint8_t >( popLSB( pawnPushPromotions ));
+		uint8_t startSquare = static_cast< uint8_t >( ( index + directionalOffsets[colorToMove] ) );
+		for( int32_t type = Knight; type < King; type++ )
+		{
+			moves[totalMoves] = Move( startSquare, index, promotions[type - 1] );
+			totalMoves++;
+		}
+	}
+
+	// pawn captures
+	uint64_t capturable = stateHistory.back().coloredBitboards[1 - colorToMove];
+	if( stateHistory.back().enPassantIndex != 64 )
+	{
+		capturable |= squareToBitboard[stateHistory.back().enPassantIndex];
+	}
+
+	uint64_t leftCaptures = ( colorToMove == 0 ? pawnBitboard >> 9 : pawnBitboard << 7 );
+	leftCaptures &= ~getFileMask( 7 );
+	leftCaptures &= capturable;
+	uint64_t leftCapturePromotions = leftCaptures & getRankMask( 7 * colorToMove );
+	leftCaptures ^= leftCapturePromotions;
+
+	uint64_t rightCaptures = ( colorToMove == 0 ? pawnBitboard >> 7 : pawnBitboard << 9 );
+	rightCaptures &= ~getFileMask( 0 );
+	rightCaptures &= capturable;
+	uint64_t rightCapturePromotions = rightCaptures & getRankMask( 7 * colorToMove );
+	rightCaptures ^= rightCapturePromotions;
+
+	while( leftCaptures != 0 )
+	{
+		int32_t index = popLSB( leftCaptures );
+		int32_t startSquare = index + ( colorToMove == 0 ? 9 : -7 );
+		moves[totalMoves] = Move( startSquare, index, ( index == stateHistory.back().enPassantIndex ? EnPassant : Normal ) );
+		totalMoves++;
+	}
+
+	while( rightCaptures != 0 )
+	{
+		int32_t index = popLSB( rightCaptures );
+		int32_t startSquare = index + ( colorToMove == 0 ? 7 : -9 );
+		moves[totalMoves] = Move( startSquare, index, ( index == stateHistory.back().enPassantIndex ? EnPassant : Normal ) );
+		totalMoves++;
+	}
+
+	while( leftCapturePromotions != 0 )
+	{
+		int32_t index = popLSB( leftCapturePromotions );
+		int32_t startSquare = index + ( colorToMove == 0 ? 9 : -7 );
+		for( int32_t type = Knight; type < King; type++ )
+		{
+			moves[totalMoves] = Move( startSquare, index, promotions[type - 1] );
+			totalMoves++;
+		}
+	}
+
+	while( rightCapturePromotions != 0 )
+	{
+		int32_t index = popLSB( rightCapturePromotions );
+		int32_t startSquare = index + ( colorToMove == 0 ? 7 : -9 );
+		for( int32_t type = Knight; type < King; type++ )
+		{
+			moves[totalMoves] = Move( startSquare, index, promotions[type - 1] );
+			totalMoves++;
+		}
+	}
+
+	return totalMoves;
+}
+
+int32_t Board::getMovesQSearch( std::array<Move, 256>& moves ) const
+{
+	const uint64_t occupiedBitboard = getOccupiedBitboard();
+	int32_t totalMoves = 0;
+	uint64_t mask = stateHistory.back().coloredBitboards[colorToMove] ^ getColoredPieceBitboard( colorToMove, Pawn );
+	// the rest of the pieces
+	while( mask != 0 )
+	{
+		const uint8_t startSquare = static_cast< uint8_t >( popLSB( mask ) );
+		const uint8_t currentType = static_cast< uint8_t >( getType( pieceAtIndex( startSquare ) ) );
+		uint64_t total = 0;
+		if( currentType == Knight )
+		{
+			total = getKnightAttacks( startSquare );
+		}
+		else if( currentType == Bishop )
+		{
+			total = getBishopAttacks( startSquare, occupiedBitboard );
+		}
+		else if( currentType == Rook )
+		{
+			total = getRookAttacks( startSquare, occupiedBitboard );
+		}
+		else if( currentType == Queen )
+		{
+			total = getRookAttacks( startSquare, occupiedBitboard ) | getBishopAttacks( startSquare, occupiedBitboard );
+		}
+		else if( currentType == King )
+		{
+			total = getKingAttacks( startSquare );
+		}
+
+		// Only captures or (not done yet) checks
+		total &= stateHistory.back().coloredBitboards[1 - colorToMove];
+		while( total != 0 )
+		{
+			moves[totalMoves] = Move( startSquare, popLSB( total ), Normal );
+			totalMoves++;
+		}
+	}
+	// pawn push promotions
+	const uint64_t pawnBitboard = getColoredPieceBitboard( colorToMove, Pawn );
+	const uint64_t emptyBitboard = ~occupiedBitboard;
+	const uint64_t pawnPushes = getPawnPushes( pawnBitboard, emptyBitboard, colorToMove );
+	uint64_t pawnPushPromotions = pawnPushes & getRankMask( 7 * colorToMove );
+	while( pawnPushPromotions != 0 )
+	{
+		const uint8_t index = static_cast< uint8_t >( popLSB( pawnPushPromotions ) );
+		const uint8_t startSquare = static_cast< uint8_t >( ( index + directionalOffsets[colorToMove] ) );
+		for( int32_t type = Knight; type < King; type++ )
+		{
+			moves[totalMoves] = Move( startSquare, index, promotions[type - 1] );
+			totalMoves++;
+		}
+	}
+
+	// captures
+	uint64_t capturable = stateHistory.back().coloredBitboards[1 - colorToMove];
+	if( stateHistory.back().enPassantIndex != 64 )
+	{
+		capturable |= squareToBitboard[stateHistory.back().enPassantIndex];
+	}
+
+	uint64_t leftCaptures = ( colorToMove == 0 ? pawnBitboard >> 9 : pawnBitboard << 7 );
+	leftCaptures &= ~getFileMask( 7 );
+	leftCaptures &= capturable;
+	uint64_t leftCapturePromotions = leftCaptures & getRankMask( 7 * colorToMove );
+	leftCaptures ^= leftCapturePromotions;
+
+	uint64_t rightCaptures = ( colorToMove == 0 ? pawnBitboard >> 7 : pawnBitboard << 9 );
+	rightCaptures &= ~getFileMask( 0 );
+	rightCaptures &= capturable;
+	uint64_t rightCapturePromotions = rightCaptures & getRankMask( 7 * colorToMove );
+	rightCaptures ^= rightCapturePromotions;
+
+	while( leftCaptures != 0 )
+	{
+		int32_t index = popLSB( leftCaptures );
+		int32_t startSquare = index + ( colorToMove == 0 ? 9 : -7 );
+		moves[totalMoves] = Move( startSquare, index, ( index == stateHistory.back().enPassantIndex ? EnPassant : Normal ) );
+		totalMoves++;
+	}
+
+	while( rightCaptures != 0 )
+	{
+		int32_t index = popLSB( rightCaptures );
+		int32_t startSquare = index + ( colorToMove == 0 ? 7 : -9 );
+		moves[totalMoves] = Move( startSquare, index, ( index == stateHistory.back().enPassantIndex ? EnPassant : Normal ) );
+		totalMoves++;
+	}
+
+	while( leftCapturePromotions != 0 )
+	{
+		int32_t index = popLSB( leftCapturePromotions );
+		int32_t startSquare = index + ( colorToMove == 0 ? 9 : -7 );
+		for( int32_t type = Knight; type < King; type++ )
+		{
+			moves[totalMoves] = Move( startSquare, index, promotions[type - 1] );
+			totalMoves++;
+		}
+	}
+
+	while( rightCapturePromotions != 0 )
+	{
+		int32_t index = popLSB( rightCapturePromotions );
+		int32_t startSquare = index + ( colorToMove == 0 ? 7 : -9 );
+		for( int32_t type = Knight; type < King; type++ )
+		{
+			moves[totalMoves] = Move( startSquare, index, promotions[type - 1] );
+			totalMoves++;
+		}
+	}
+
+	return totalMoves;
+}
+
+uint8_t Board::getColorToMove() const
+{
+	return colorToMove;
+}
+
+bool Board::isInCheck() const
+{
+	return squareIsUnderAttack( stateHistory.back().kingSquares[colorToMove] );
+}
+
+// thanks ciekce, shoutout stormphrax
+bool Board::squareIsUnderAttack( int32_t square ) const
+{
+	if( stateHistory.back().threats != 0 )
+	{
+		return ( stateHistory.back().threats & ( 1ULL << square ) );
+	}
+	else
+	{
+		const int32_t opponent = 1 - colorToMove;
+		const uint64_t queens = getColoredPieceBitboard( opponent, Queen );
+
+		uint64_t mask = getRookAttacks( square, getOccupiedBitboard() ) & ( queens | getColoredPieceBitboard( opponent, Rook ) );
+		if( mask != 0 )
+		{
+			return true;
+		}
+
+		mask = getBishopAttacks( square, getOccupiedBitboard() ) & ( queens | getColoredPieceBitboard( opponent, Bishop ) );
+		if( mask != 0 )
+		{
+			return true;
+		}
+
+		mask = getKnightAttacks( square ) & getColoredPieceBitboard( opponent, Knight );
+		if( mask != 0 )
+		{
+			return true;
+		}
+
+		mask = getPawnAttacks( square, colorToMove ) & getColoredPieceBitboard( opponent, Pawn );
+		if( mask != 0 )
+		{
+			return true;
+		}
+
+		mask = getKingAttacks( square ) & getColoredPieceBitboard( opponent, King );
+		if( mask != 0 )
+		{
+			return true;
+		}
+
+		return false;
+	}
+}
+
+template <bool PushNNUE> bool Board::makeMove( Move move )
+{
+	//std::cout << "move " << toLongAlgebraic(move) << " on position " << getFenString() << std::endl;
+	//std::cout << "makemove " << toLongAlgebraic(move) << std::endl;
+	// push to vectors
+	stateHistory.push_back( stateHistory.back() );
+	NetworkUpdates updates;
+	stateHistory.back().threats = 0;
+
+	// get information
+	int32_t start = move.getStartSquare();
+	int32_t end = move.getEndSquare();
+	int32_t movedPiece = pieceAtIndex( move.getStartSquare() );
+	int32_t victim = pieceAtIndex( move.getEndSquare() );
+	int32_t flag = move.getFlag();
+	assert( movedPiece != None );
+	bool isCapture = ( victim != None );
+	int32_t movedPieceType = getType( movedPiece );
+
+	// hundred Ply (fifty move) counter
+	stateHistory.back().hundredPlyCounter++;
+	if( isCapture || movedPieceType == Pawn )
+	{
+		stateHistory.back().hundredPlyCounter = 0;
+	}
+
+	// king square updates
+	if( movedPieceType == King )
+	{
+		if( refreshRequired( colorToMove, start, end ) )
+		{
+			updates.pushBucket( end, colorToMove );
+		}
+
+		stateHistory.back().kingSquares[colorToMove] = static_cast<uint8_t>( end );
+	}
+
+	// actually make the move
+	if( isCapture )
+	{
+		removePiece<false>( end, victim );
+		updates.pushSub( end, victim );
+	}
+
+	removePiece<false>( start, movedPiece );
+	updates.pushSub( start, movedPiece );
+	if( flag < promotions[0] )
+	{
+		addPiece<false>( end, movedPiece );
+		updates.pushAdd( end, movedPiece );
+	}
+
+	// En Passant
+	stateHistory.back().enPassantIndex = 64;
+
+	// castling rights updates!
+	if( ( stateHistory.back().castlingRights & kingRightMasks[1 - colorToMove] ) != 0 )
+	{
+		switch( movedPieceType )
+		{
+		case Rook:
+			stateHistory.back().castlingRights &= rookRightMasks[start];
+			break;
+		case King:
+			stateHistory.back().castlingRights &= kingRightMasks[colorToMove];
+			break;
+		default:
+			break;
+		}
+	}
+
+	if( getType( victim ) == Rook )
+	{
+		switch( end )
+		{
+		case 7:
+			stateHistory.back().castlingRights &= rookRightMasks[end];
+			break;
+		case 0:
+			stateHistory.back().castlingRights &= rookRightMasks[end];
+			break;
+		case 63:
+			stateHistory.back().castlingRights &= rookRightMasks[end];
+			break;
+		case 56:
+			stateHistory.back().castlingRights &= rookRightMasks[end];
+			break;
+		default:
+			break;
+		}
+	}
+
+	// edge cases!
+	switch( flag )
+	{
+		// castling cases
+	case castling[0]:
+		assert( pieceAtIndex( 7 ) != None );
+		movePiece<false>( 7, Rook | White, 5, None );
+		updates.pushSub( 7, Rook | White );
+		updates.pushAdd( 5, Rook | White );
+		break;
+	case castling[1]:
+		assert( pieceAtIndex( 0 ) != None );
+		movePiece<false>( 0, Rook | White, 3, None );
+		updates.pushSub( 0, Rook | White );
+		updates.pushAdd( 3, Rook | White );
+		break;
+	case castling[2]:
+		assert( pieceAtIndex( 63 ) != None );
+		movePiece<false>( 63, Rook | Black, 61, None );
+		updates.pushSub( 63, Rook | Black );
+		updates.pushAdd( 61, Rook | Black );
+		break;
+	case castling[3]:
+		assert( pieceAtIndex( 56 ) != None );
+		movePiece<false>( 56, Rook | Black, 59, None );
+		updates.pushSub( 56, Rook | Black );
+		updates.pushAdd( 59, Rook | Black );
+		break;
+		// double pawn push
+	case DoublePawnPush:
+		stateHistory.back().enPassantIndex = static_cast<uint8_t>( end + directionalOffsets[colorToMove] );
+		break;
+		// en passant
+	case EnPassant:
+		assert( pieceAtIndex( move.getEndSquare() + directionalOffsets[colorToMove] ) != None );
+		removePiece<false>( end + directionalOffsets[colorToMove], Pawn | ( 8 * !colorToMove ) );
+		updates.pushSub( end + directionalOffsets[colorToMove], Pawn | ( 8 * !colorToMove ) );
+		break;
+		// promotion cases
+	case promotions[0]:
+		addPiece<false>( end, Knight | ( 8 * colorToMove ) );
+		updates.pushAdd( end, Knight | ( 8 * colorToMove ) );
+		break;
+	case promotions[1]:
+		addPiece<false>( end, Bishop | ( 8 * colorToMove ) );
+		updates.pushAdd( end, Bishop | ( 8 * colorToMove ) );
+		break;
+	case promotions[2]:
+		addPiece<false>( end, Rook | ( 8 * colorToMove ) );
+		updates.pushAdd( end, Rook | ( 8 * colorToMove ) );
+		break;
+	case promotions[3]:
+		addPiece<false>( end, Queen | ( 8 * colorToMove ) );
+		updates.pushAdd( end, Queen | ( 8 * colorToMove ) );
+		break;
+	default:
+		break;
+	}
+
+	plyCount++;
+	// if in check, move was illegal
+	if( isInCheck() )
+	{
+		// so you must undo it and return false
+		undoMove<false>();
+		colorToMove = 1 - colorToMove;
+		//std::cout << "Changing Color To Move, move was illegal\n";
+		return false;
+	}
+	else
+	{
+		if constexpr( PushNNUE )
+		{
+			nnueState.performUpdatesAndPush( updates, stateHistory.back().kingSquares[0], stateHistory.back().kingSquares[1], stateHistory.back() );
+		}
+		else
+		{
+			nnueState.performUpdates( updates, stateHistory.back().kingSquares[0], stateHistory.back().kingSquares[1], stateHistory.back() );
+		}
+
+		// otherwise it's good, move on
+		colorToMove = 1 - colorToMove;
+		stateHistory.back().threats = calculateThreats();
+		//std::cout << "Changing Color To Move, move was legal\n";
+		stateHistory.back().zobristHash ^= zobColorToMove;
+		return true;
+	}
+}
+
+template <bool PushNNUE> void Board::undoMove()
+{
+	//std::cout << "undomove\n";
+	stateHistory.pop_back();
+	if constexpr( PushNNUE )
+	{
+		nnueState.pop();
+	}
+
+	plyCount--;
+	colorToMove = 1 - colorToMove;
+	//std::cout << "position fen " << getFenString() << std::endl;
+	//std::cout << "Changing Color To Move in undo move\n";
+	// no zobrist update here because the saved zobrist hash is before the color changed
+}
+
+uint64_t Board::getCurrentPlayerBitboard() const
+{
+	return stateHistory.back().coloredBitboards[colorToMove];
+}
+
+void Board::changeColor()
+{
+	stateHistory.push_back( stateHistory.back() );
+	nnueState.push();
+	stateHistory.back().enPassantIndex = 64;
+	stateHistory.back().hundredPlyCounter++;
+	colorToMove = 1 - colorToMove;
+	stateHistory.back().threats = calculateThreats();
+	stateHistory.back().zobristHash ^= zobColorToMove;
+}
+
+void Board::undoChangeColor()
+{
+	stateHistory.pop_back();
+	nnueState.pop();
+	colorToMove = 1 - colorToMove;
+}
+
+int32_t Board::getEvaluation()
+{
+	//std::cout << "position fen " << getFenString() << std::endl;
+	//std::cout << "evaluate" << std::endl;
+	int32_t eval = nnueState.evaluate( static_cast<EColor>( colorToMove ), std::popcount( getOccupiedBitboard() ) );
+	//nnueState.fullRefresh(stateHistory.back(), stateHistory.back().kingSquares[0], stateHistory.back().kingSquares[1]);
+	//assert(eval == nnueState.evaluate(colorToMove, __builtin_popcountll(getOccupiedBitboard())));
+	int32_t phase = 3 * std::popcount( stateHistory.back().pieceBitboards[Knight] )
+		+ 3 * std::popcount( stateHistory.back().pieceBitboards[Bishop] )
+		+ 5 * std::popcount( stateHistory.back().pieceBitboards[Rook] )
+		+ 10 * std::popcount( stateHistory.back().pieceBitboards[Queen] );
+
+	eval = eval * ( 206 + phase ) / 256;
+	eval = eval * ( 200 - stateHistory.back().hundredPlyCounter ) / 200;
+
+	return eval;
+}
+
+int32_t Board::getCastlingRights() const
+{
+	return stateHistory.back().castlingRights;
+}
+
+int32_t Board::getEnPassantIndex() const
+{
+	return stateHistory.back().enPassantIndex;
+}
+
+void initializeZobrist()
+{
+	// random number stuff
+	//std::random_device rd;
+	std::mt19937_64 gen( 0xABBABA5ED );
+	std::uniform_int_distribution<uint64_t> dis;
+	// color to move
+	zobColorToMove = dis( gen );
+	// squares
+	for( int32_t i = 0; i < 64; i++ )
+	{
+		for( int32_t j = 0; j < 14; j++ )
+		{
+			zobTable[i][j] = dis( gen );
+		}
+	}
+}
+
+uint64_t Board::fullZobristRegen()
+{
+	//std::cout << "Beginning Full Regen\n";
+	uint64_t mask = getOccupiedBitboard();
+	uint64_t result = 0;
+	while( mask != 0 )
+	{
+		int32_t index = popLSB( mask );
+		int32_t piece = pieceAtIndex( index );
+		//std::cout << "Adding piece of type " << std::to_string(piece) << " at index " << std::to_string(index) << '\n';
+		result ^= zobTable[index][piece];
+	}
+	if( colorToMove == 1 )
+	{
+		//std::cout << "Changing Color To Move in full regen\n";
+		result ^= zobColorToMove;
+	}
+	//std::cout << "Result: " << std::to_string(result) << '\n';
+	return result;
+}
+
+bool Board::isRepeatedPosition() const
+{
+	int32_t size = static_cast< int32_t >( std::ssize( stateHistory ) );
+	for( int32_t i = size - 5; i >= size - stateHistory.back().hundredPlyCounter - 1; i -= 2 )
+	{
+		if( stateHistory[i].zobristHash == stateHistory.back().zobristHash )
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+bool Board::isLegalMove( const Move& move ) const
+{
+	std::array<Move, 256> moves;
+	const int32_t totalMoves = getMoves( moves );
+	for( int32_t i = 0; i < totalMoves; i++ )
+	{
+		if( moves[i] == move )
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+uint64_t Board::getAttackers( int32_t square ) const
+{
+	uint64_t occupied = getOccupiedBitboard();
+	return ( getPawnAttacks( square, 0 ) & getColoredPieceBitboard( 1, Pawn ) )
+		| ( getPawnAttacks( square, 1 ) & getColoredPieceBitboard( 0, Pawn ) )
+		| ( getKnightAttacks( square ) & stateHistory.back().pieceBitboards[Knight] )
+		| ( getRookAttacks( square, occupied ) & ( stateHistory.back().pieceBitboards[Rook] | stateHistory.back().pieceBitboards[Queen] ) )
+		| ( getBishopAttacks( square, occupied ) & ( stateHistory.back().pieceBitboards[Bishop] | stateHistory.back().pieceBitboards[Queen] ) )
+		| ( getKingAttacks( square ) & stateHistory.back().pieceBitboards[King] );
+}
+
+uint64_t Board::getColoredBitboard( int32_t color ) const
+{
+	return stateHistory.back().coloredBitboards[color];
+}
+
+uint64_t Board::getPieceBitboard( int32_t piece ) const
+{
+	return stateHistory.back().pieceBitboards[piece];
+}
+
+int32_t Board::getFiftyMoveCount() const
+{
+	return stateHistory.back().hundredPlyCounter / 2;
+}
+
+uint64_t Board::getZobristHash() const
+{
+	return stateHistory.back().zobristHash;
+}
+
+std::array<int32_t, 2> Board::getNonPawnHash() const
+{
+	std::array<uint64_t, 2> hashes = stateHistory.back().nonPawnHashes;
+	std::array<int32_t, 2> clipped = { static_cast<int32_t>( hashes[0] & Corrhist::mask ), static_cast<int32_t>( hashes[1] & Corrhist::mask ) };
+	return clipped;
+}
+
+BoardState Board::getBoardState() const
+{
+	return stateHistory.back();
+}
+
+Board::Board( BoardState s, int32_t ctm )
+{
+	stateHistory.push_back( s );
+	colorToMove = static_cast<uint8_t>( ctm );
+	stateHistory.back().hundredPlyCounter = 0;
+	plyCount = 0;
+	stateHistory.reserve( 256 );
+}
+
+// estimates the resulting Zobrist key from a move
+// uint64_t Board::keyAfter( const Move move ) const
+// {
+// 	const int32_t startSquare = move.getStartSquare();
+// 	const int32_t endSquare = move.getEndSquare();
+//
+// 	const int32_t moving = pieceAtIndex( startSquare );
+// 	const int32_t captured = pieceAtIndex( endSquare );
+//
+// 	uint64_t key = stateHistory.back().zobristHash;
+//
+// 	key ^= zobTable[startSquare][moving];
+// 	key ^= zobTable[endSquare][moving];
+//
+// 	if( captured != None )
+// 	{
+// 		key ^= zobTable[endSquare][captured];
+// 	}
+//
+// 	key ^= zobColorToMove;
+//
+// 	return key;
+// }
+
+int32_t Board::getPlyCount() const
+{
+	return plyCount;
+}
+
+bool Board::isPKEndgame() const
+{
+	uint64_t occupied = getOccupiedBitboard();
+	uint64_t pk = getPieceBitboard( Pawn ) | getPieceBitboard( King );
+	return ( ( getColoredBitboard( colorToMove ) & ( occupied ^ pk ) ) == 0 );
+}
+
+int32_t Board::getPawnHashIndex() const
+{
+	// last 15 bits
+	return stateHistory.back().pawnHash & Corrhist::mask;
+}
+
+uint64_t Board::calculateThreats() const
+{
+	const int32_t them = 1 - colorToMove;
+	const uint64_t occupied = getOccupiedBitboard();
+
+	uint64_t threats = 0;
+
+	const uint64_t queens = getColoredPieceBitboard( them, Queen );
+
+	uint64_t rooks = queens | getColoredPieceBitboard( them, Rook );
+	while( rooks )
+	{
+		const int32_t rook = popLSB( rooks );
+		threats |= getRookAttacks( rook, occupied );
+	}
+
+	uint64_t bishops = queens | getColoredPieceBitboard( them, Bishop );
+	while( bishops )
+	{
+		const int32_t bishop = popLSB( bishops );
+		threats |= getBishopAttacks( bishop, occupied );
+	}
+
+	uint64_t knights = getColoredPieceBitboard( them, Knight );
+	while( knights )
+	{
+		const int32_t knight = popLSB( knights );
+		threats |= getKnightAttacks( knight );
+	}
+
+	const uint64_t pawns = getColoredPieceBitboard( them, Pawn );
+	if( them == 0 )
+	{
+		threats |= ( ( pawns >> 9 ) & ~getFileMask( 7 ) ) | ( ( pawns >> 7 ) & ~getFileMask( 0 ) );
+	}
+	else
+	{
+		threats |= ( ( pawns << 7 ) & ~getFileMask( 7 ) ) | ( ( pawns << 9 ) & ~getFileMask( 0 ) );
+	}
+
+	threats |= getKingAttacks( stateHistory.back().kingSquares[them] );
+
+	return threats;
+}
+
+uint64_t Board::getThreats() const
+{
+	return stateHistory.back().threats;
+}
+
+int32_t Board::getMajorHash() const
+{
+	return stateHistory.back().majorHash & Corrhist::mask;
+}
+
+int32_t Board::getMinorHash() const
+{
+	return stateHistory.back().minorHash & Corrhist::mask;
+}
+
+bool Board::isPseudolegal( Move move ) const
+{
+	const int32_t from = move.getStartSquare();
+	const int32_t to = move.getEndSquare();
+	const int32_t flag = move.getFlag();
+	const int32_t piece = pieceAtIndex( from );
+	const int32_t victim = pieceAtIndex( to );
+
+	if( piece == None || getColor( piece ) != colorToMove )
+	{
+		return false;
+	}
+
+	// ignoring another condition that would otherwise go here because my castling moves aren't encoded as king takes rook
+	// if capturing own piece or king, that's a bad thing
+	if( victim != None && ( getColor( victim ) == colorToMove || getType( victim ) == King ) )
+	{
+		return false;
+	}
+
+
+	if( flag >= castling[0] && flag <= castling[3] )
+	{
+		if( getType( piece ) != King || isInCheck() )
+		{
+			return false;
+		}
+
+		// if the rank is wrong
+		const int32_t home = colorToMove == 0 ? 7 : 0;
+		if( from / 8 != home || to / 8 != home )
+		{
+			return false;
+		}
+
+		// movegen checks
+		// Check if any castling rights exist for the current player
+		if( ( stateHistory.back().castlingRights & kingRightMasks[1 - colorToMove] ) == 0 )
+		{
+			return false;
+		}
+
+		const uint64_t occ = getOccupiedBitboard();
+		// Check specific castling move types
+		if( colorToMove == 1 )
+		{ 
+			// White to move
+			if( from == 4 && to == 6 && flag == castling[0] )
+			{ 
+				// White kingside castling
+				return ( stateHistory.back().castlingRights & 1 ) != 0 && ( occ & 0x60 ) == 0 && !squareIsUnderAttack( 5 );
+			}
+			else if( from == 4 && to == 2 && flag == castling[1] )
+			{ 
+				// White queenside castling
+				return ( stateHistory.back().castlingRights & 2 ) != 0 && ( occ & 0xE ) == 0 && !squareIsUnderAttack( 3 );
+			}
+		}
+		else
+		{ 
+			// Black to move
+			if( from == 60 && to == 62 && flag == castling[2] )
+			{ 
+				// Black kingside castling
+				return ( stateHistory.back().castlingRights & 4 ) != 0 && ( occ & 0x6000000000000000 ) == 0 && !squareIsUnderAttack( 61 );
+			}
+			else if( from == 60 && to == 58 && flag == castling[3] )
+			{ 
+				// Black queenside castling
+				return ( stateHistory.back().castlingRights & 8 ) != 0 && ( occ & 0xE00000000000000 ) == 0 && !squareIsUnderAttack( 59 );
+			}
+		}
+
+		return false;
+	}
+
+	if( getType( piece ) == Pawn )
+	{
+		if( flag == EnPassant )
+		{
+			return to == stateHistory.back().enPassantIndex && ( getPawnAttacks( from, colorToMove ) & ( 1ULL << to ) ) != 0;
+		}
+
+		const int32_t fromRank = from / 8;
+		const int32_t toRank = to / 8;
+		// moving backwards is bad
+		if( ( colorToMove == 0 && toRank >= fromRank ) || ( colorToMove == 1 && toRank <= fromRank ) )
+		{
+			return false;
+		}
+
+		const int32_t promoRank = colorToMove == 0 ? 0 : 7;
+		// promotion to wrong rank or nonpromotion on back rank
+		if( ( flag >= promotions[0] ) != ( toRank == promoRank ) )
+		{
+			return false;
+		}
+
+		const int32_t fromFile = from & 7;
+		const int32_t toFile = to & 7;
+		if( fromFile != toFile )
+		{
+			const uint64_t pawnAttacks = getPawnAttacks( from, colorToMove );
+			const uint64_t enemyPieces = getColoredBitboard( 1 - colorToMove );
+			const uint64_t attackedEnemies = pawnAttacks & enemyPieces;
+
+			if( !( attackedEnemies & ( 1ULL << to ) ) )
+			{
+				return false;
+			}
+		}
+		else if( victim != None )
+		{
+			// forward capture
+			return false;
+		}
+
+		const int32_t rankDelta = std::abs( toRank - fromRank );
+		int32_t maxDelta;
+		if( colorToMove == 0 )
+		{
+			maxDelta = fromRank == 6 ? 2 : 1;
+		}
+		else
+		{
+			maxDelta = fromRank == 1 ? 2 : 1;
+		}
+
+		if( rankDelta > maxDelta )
+		{
+			return false;
+		}
+
+		// incorrect delta
+		if( rankDelta == 2 && flag != DoublePawnPush )
+		{
+			return false;
+		}
+
+		if( rankDelta == 1 && flag == DoublePawnPush )
+		{
+			return false;
+		}
+
+		// blocked double pawn push
+		if( rankDelta == 2 && ( getOccupiedBitboard() & ( 1ULL << ( to + ( colorToMove == 1 ? -8 : 8 ) ) ) ) )
+		{
+			return false;
+		}
+	}
+	else
+	{
+		// can't do ep or promote without a pawn
+		if( flag == EnPassant || flag >= promotions[0] || flag == DoublePawnPush )
+		{
+			return false;
+		}
+
+		uint64_t total = 0ULL;
+		const uint64_t occ = getOccupiedBitboard();
+		const int32_t currentType = getType( piece );
+		if( currentType == Knight )
+		{
+			total = getKnightAttacks( from );
+		}
+		else if( currentType == Bishop )
+		{
+			total = getBishopAttacks( from, occ );
+		}
+		else if( currentType == Rook )
+		{
+			total = getRookAttacks( from, occ );
+		}
+		else if( currentType == Queen )
+		{
+			total = getRookAttacks( from, occ ) | getBishopAttacks( from, occ );
+		}
+		else if( currentType == King )
+		{
+			total = getKingAttacks( from );
+		}
+		else
+		{
+			std::unreachable();
+		}
+
+		if( ( total & ( 1ULL << to ) ) == 0 )
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
+// currently only generating captures, should perhaps generate pawn promotions as well but it's fine
+int32_t Board::getNoisies( std::array<Move, 256>& moves, int32_t totalMoves ) const
+{
+	uint64_t occupiedBitboard = getOccupiedBitboard();
+
+	uint64_t mask = stateHistory.back().coloredBitboards[colorToMove] ^ getColoredPieceBitboard( colorToMove, Pawn );
+	while( mask != 0 )
+	{
+		uint8_t startSquare = static_cast<uint8_t>( popLSB( mask ) );
+		uint8_t currentType = static_cast< uint8_t >( getType( pieceAtIndex( startSquare ) ) );
+		uint64_t total = 0;
+		if( currentType == Knight )
+		{
+			total = getKnightAttacks( startSquare );
+		}
+		else if( currentType == Bishop )
+		{
+			total = getBishopAttacks( startSquare, occupiedBitboard );
+		}
+		else if( currentType == Rook )
+		{
+			total = getRookAttacks( startSquare, occupiedBitboard );
+		}
+		else if( currentType == Queen )
+		{
+			total = getRookAttacks( startSquare, occupiedBitboard ) | getBishopAttacks( startSquare, occupiedBitboard );
+		}
+		else if( currentType == King )
+		{
+			total = getKingAttacks( startSquare );
+		}
+
+		total &= stateHistory.back().coloredBitboards[1 - colorToMove];
+		while( total != 0 )
+		{
+			moves[totalMoves] = Move( startSquare, popLSB( total ), Normal );
+			totalMoves++;
+		}
+	}
+
+	uint64_t pawnBitboard = getColoredPieceBitboard( colorToMove, Pawn );
+	uint64_t capturable = stateHistory.back().coloredBitboards[1 - colorToMove];
+	if( stateHistory.back().enPassantIndex != 64 )
+	{
+		capturable |= squareToBitboard[stateHistory.back().enPassantIndex];
+	}
+
+	uint64_t leftCaptures = ( colorToMove == 0 ? pawnBitboard >> 9 : pawnBitboard << 7 );
+	leftCaptures &= ~getFileMask( 7 );
+	leftCaptures &= capturable;
+	uint64_t leftCapturePromotions = leftCaptures & getRankMask( 7 * colorToMove );
+	leftCaptures ^= leftCapturePromotions;
+
+	uint64_t rightCaptures = ( colorToMove == 0 ? pawnBitboard >> 7 : pawnBitboard << 9 );
+	rightCaptures &= ~getFileMask( 0 );
+	rightCaptures &= capturable;
+	uint64_t rightCapturePromotions = rightCaptures & getRankMask( 7 * colorToMove );
+	rightCaptures ^= rightCapturePromotions;
+
+	while( leftCaptures != 0 )
+	{
+		int32_t index = popLSB( leftCaptures );
+		int32_t startSquare = index + ( colorToMove == 0 ? 9 : -7 );
+		moves[totalMoves] = Move( startSquare, index, ( index == stateHistory.back().enPassantIndex ? EnPassant : Normal ) );
+		totalMoves++;
+	}
+
+	while( rightCaptures != 0 )
+	{
+		int32_t index = popLSB( rightCaptures );
+		int32_t startSquare = index + ( colorToMove == 0 ? 7 : -9 );
+		moves[totalMoves] = Move( startSquare, index, ( index == stateHistory.back().enPassantIndex ? EnPassant : Normal ) );
+		totalMoves++;
+	}
+
+	while( leftCapturePromotions != 0 )
+	{
+		int32_t index = popLSB( leftCapturePromotions );
+		int32_t startSquare = index + ( colorToMove == 0 ? 9 : -7 );
+		for( int32_t type = Knight; type < King; type++ )
+		{
+			moves[totalMoves] = Move( startSquare, index, promotions[type - 1] );
+			totalMoves++;
+		}
+	}
+
+	while( rightCapturePromotions != 0 )
+	{
+		int32_t index = popLSB( rightCapturePromotions );
+		int32_t startSquare = index + ( colorToMove == 0 ? 7 : -9 );
+		for( int32_t type = Knight; type < King; type++ )
+		{
+			moves[totalMoves] = Move( startSquare, index, promotions[type - 1] );
+			totalMoves++;
+		}
+	}
+
+	return totalMoves;
+}
+
+int32_t Board::getQuiets( std::array<Move, 256>& moves, int32_t totalMoves ) const
+{
+	uint64_t occupiedBitboard = getOccupiedBitboard();
+
+	if( ( stateHistory.back().castlingRights & kingRightMasks[1 - colorToMove] ) != 0 )
+	{
+		if( !isInCheck() )
+		{
+			if( colorToMove == 1 )
+			{
+				if( ( stateHistory.back().castlingRights & 1 ) != 0 && ( occupiedBitboard & 0x60 ) == 0 && !squareIsUnderAttack( 5 ) )
+				{
+					moves[totalMoves] = Move( 4, 6, castling[0] );
+					totalMoves++;
+				}
+				if( ( stateHistory.back().castlingRights & 2 ) != 0 && ( occupiedBitboard & 0xE ) == 0 && !squareIsUnderAttack( 3 ) )
+				{
+					moves[totalMoves] = Move( 4, 2, castling[1] );
+					totalMoves++;
+				}
+			}
+			else
+			{
+				if( ( stateHistory.back().castlingRights & 4 ) != 0 && ( occupiedBitboard & 0x6000000000000000 ) == 0 && !squareIsUnderAttack( 61 ) )
+				{
+					moves[totalMoves] = Move( 60, 62, castling[2] );
+					totalMoves++;
+				}
+				if( ( stateHistory.back().castlingRights & 8 ) != 0 && ( occupiedBitboard & 0xE00000000000000 ) == 0 && !squareIsUnderAttack( 59 ) )
+				{
+					moves[totalMoves] = Move( 60, 58, castling[3] );
+					totalMoves++;
+				}
+			}
+		}
+	}
+
+	uint64_t mask = stateHistory.back().coloredBitboards[colorToMove] ^ getColoredPieceBitboard( colorToMove, Pawn );
+	while( mask != 0 )
+	{
+		uint8_t startSquare = static_cast< uint8_t >( popLSB( mask ) );
+		uint8_t currentType = static_cast< uint8_t >( getType( pieceAtIndex( startSquare ) ));
+		uint64_t total = 0;
+		if( currentType == Knight )
+		{
+			total = getKnightAttacks( startSquare );
+		}
+		else if( currentType == Bishop )
+		{
+			total = getBishopAttacks( startSquare, occupiedBitboard );
+		}
+		else if( currentType == Rook )
+		{
+			total = getRookAttacks( startSquare, occupiedBitboard );
+		}
+		else if( currentType == Queen )
+		{
+			total = getRookAttacks( startSquare, occupiedBitboard ) | getBishopAttacks( startSquare, occupiedBitboard );
+		}
+		else if( currentType == King )
+		{
+			total = getKingAttacks( startSquare );
+		}
+
+		total &= ~occupiedBitboard;
+		while( total != 0 )
+		{
+			moves[totalMoves] = Move( startSquare, popLSB( total ), Normal );
+			totalMoves++;
+		}
+	}
+
+	// pawn pushes
+	uint64_t pawnBitboard = getColoredPieceBitboard( colorToMove, Pawn );
+	uint64_t emptyBitboard = ~occupiedBitboard;
+	uint64_t pawnPushes = getPawnPushes( pawnBitboard, emptyBitboard, colorToMove );
+	uint64_t doublePawnPushes = getDoublePawnPushes( pawnPushes, emptyBitboard, colorToMove );
+	uint64_t pawnPushPromotions = pawnPushes & getRankMask( 7 * colorToMove );
+	pawnPushes ^= pawnPushPromotions;
+	while( pawnPushes != 0 )
+	{
+		uint8_t index = static_cast< uint8_t >( popLSB( pawnPushes ) );
+		uint8_t startSquare = static_cast< uint8_t >( ( index + directionalOffsets[colorToMove] ) );
+		moves[totalMoves] = Move( startSquare, index, Normal );
+		totalMoves++;
+	}
+
+	while( doublePawnPushes != 0 )
+	{
+		uint8_t index = static_cast< uint8_t >( popLSB( doublePawnPushes ) );
+		uint8_t startSquare = static_cast< uint8_t >( ( index + ( directionalOffsets[colorToMove] * 2 ) ) );
+		assert( getType( pieceAtIndex( startSquare ) ) == Pawn );
+		moves[totalMoves] = Move( startSquare, index, DoublePawnPush );
+		totalMoves++;
+	}
+
+	while( pawnPushPromotions != 0 )
+	{
+		uint8_t index = static_cast< uint8_t >( popLSB( pawnPushPromotions ) );
+		uint8_t startSquare = static_cast< uint8_t >( ( index + directionalOffsets[colorToMove] ) );
+		for( int32_t type = Knight; type < King; type++ )
+		{
+			moves[totalMoves] = Move( startSquare, index, promotions[type - 1] );
+			totalMoves++;
+		}
+	}
+
+	return totalMoves;
+}

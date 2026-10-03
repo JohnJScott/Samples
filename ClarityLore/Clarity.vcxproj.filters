@@ -1,0 +1,22 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="src\uci.cpp" />
+    <ClCompile Include="src\tests.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\globals.h" />
+    <ClInclude Include="src\tunables.h" />
+    <ClInclude Include="src\slidey.h" />
+    <ClInclude Include="src\search.h" />
+    <ClInclude Include="src\uci.h" />
+    <ClInclude Include="src\testessentials.h" />
+    <ClInclude Include="src\testsuites.h" />
+    <ClInclude Include="src\nwupdate.h" />
+    <ClInclude Include="src\masks.h" />
+    <ClInclude Include="src\tt.h" />
+    <ClInclude Include="src\info.h" />
+    <ClInclude Include="src\limiters.h" />
+    <ClInclude Include="src\corrhist.h" />
+  </ItemGroup>
+</Project>

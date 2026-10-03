@@ -1,0 +1,13 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="Clarity.vcxproj" Id="8cfa504c-012a-4d53-b1b3-0da946ab33fd" />
+  <Project Path="ClarityCommon.vcxproj" Id="430fad07-68d8-49fc-8bdc-9bb9895f23fb" />
+  <Project Path="ClarityDatagen.vcxproj" Id="08878006-f333-4797-8665-8c75f8459cdf" />
+  <Project Path="ClarityTest.vcxproj" Id="5b3c7a41-9e28-4d6f-b1a7-0c4e92d38f15" />
+  <Properties Name="PerforceSourceControlProviderSolutionProperties">
+    <Property Name="SolutionIsControlled" Value="True" />
+  </Properties>
+</Solution>

@@ -1,0 +1,35 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="src\bmi2.cpp" />
+    <ClCompile Include="src\board.cpp" />
+    <ClCompile Include="src\eval.cpp" />
+    <ClCompile Include="src\globals.cpp" />
+    <ClCompile Include="src\move.cpp" />
+    <ClCompile Include="src\movegen.cpp" />
+    <ClCompile Include="src\search.cpp" />
+    <ClCompile Include="src\tt.cpp" />
+    <ClCompile Include="src\tbprobe.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\corrhist.h" />
+    <ClInclude Include="src\globals.h" />
+    <ClInclude Include="src\tunables.h" />
+    <ClInclude Include="src\slidey.h" />
+    <ClInclude Include="src\normalize.h" />
+    <ClInclude Include="src\nwupdate.h" />
+    <ClInclude Include="src\stdendian.h" />
+    <ClInclude Include="src\tbconfig.h" />
+    <ClInclude Include="src\tbprobe.h" />
+    <ClInclude Include="src\movepick.h" />
+    <ClInclude Include="src\see.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <Object Include="$(IntDir)eval.ispc.obj" />
+    <Object Include="$(IntDir)eval.ispc_avx2.obj" />
+    <Object Include="$(IntDir)eval.ispc_avx512skx.obj" />
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="src\eval.ispc" />
+  </ItemGroup>
+</Project>

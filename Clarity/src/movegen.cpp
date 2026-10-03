@@ -1,0 +1,108 @@
+/*
+	Clarity
+	Copyright (C) 2026 Joseph Pasfield
+
+	This program is free software: you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation, either version 3 of the License, or
+	(at your option) any later version.
+
+	This program is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
+
+	You should have received a copy of the GNU General Public License
+	along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+#include "masks.h"
+#include "slidey.h"
+
+// classical approach move generation
+uint64_t getRookAttacksOld( int32_t square, uint64_t occupiedBitboard )
+{
+	uint64_t attacks = 0;
+	for( int32_t direction = 0; direction < 4; direction++ )
+	{
+		uint64_t currentAttack = slideyPieceRays[direction][square];
+		if( ( direction & 1 ) == 0 )
+		{
+			currentAttack ^= slideyPieceRays[direction][std::clamp( std::countr_zero( currentAttack & occupiedBitboard ), 0, 63 )];
+		}
+		else
+		{
+			currentAttack ^= slideyPieceRays[direction][std::clamp( 63 - std::countl_zero( currentAttack & occupiedBitboard ), 0, 63 )];
+		}
+
+		attacks |= currentAttack;
+	}
+
+	return attacks;
+}
+uint64_t getBishopAttacksOld( int32_t square, uint64_t occupiedBitboard )
+{
+	uint64_t attacks = 0;
+	for( int32_t direction = 4; direction < 8; direction++ )
+	{
+		uint64_t currentAttack = slideyPieceRays[direction][square];
+		if( ( direction & 1 ) == 0 )
+		{
+			currentAttack ^= slideyPieceRays[direction][std::clamp( std::countr_zero( currentAttack & occupiedBitboard ), 0, 63 )];
+		}
+		else
+		{
+			currentAttack ^= slideyPieceRays[direction][std::clamp( 63 - std::countl_zero( currentAttack & occupiedBitboard ), 0, 63 )];
+		}
+
+		attacks |= currentAttack;
+	}
+
+	return attacks;
+}
+
+// this is getting the attacks from either pext or magic bitboard move generation, which is decided by which build is being done
+uint64_t getRookAttacks( int32_t square, uint64_t occupiedBitboard )
+{
+	assert( square < 64 );
+	return rookAttackLookup[square][_pext_u64( occupiedBitboard, rookMasks[square] )];
+}
+
+uint64_t getBishopAttacks( int32_t square, uint64_t occupiedBitboard )
+{
+	assert( square < 64 );
+	return bishopAttackLookup[square][_pext_u64( occupiedBitboard, bishopMasks[square] )];
+}
+
+// pawn pushes
+uint64_t getPawnPushes( uint64_t pawnBitboard, uint64_t emptyBitboard, int32_t colorToMove )
+{
+	return ( colorToMove == 0 ? pawnBitboard >> 8 : pawnBitboard << 8 ) & emptyBitboard;
+}
+
+uint64_t getDoublePawnPushes( uint64_t pawnAttackBits, uint64_t emptyBitboard, int32_t colorToMove )
+{
+	pawnAttackBits &= getRankMask( colorToMove == 1 ? 2 : 5 );
+	return ( colorToMove == 0 ? pawnAttackBits >> 8 : pawnAttackBits << 8 ) & emptyBitboard;
+}
+
+// using the lookups from Homura
+uint64_t getPawnAttacks( int32_t square, int32_t colorToMove )
+{
+	return pawnAttacks[colorToMove][square];
+}
+
+uint64_t getKnightAttacks( int32_t square )
+{
+	return knightAttacks[square];
+}
+
+uint64_t getKingAttacks( int32_t square )
+{
+	return kingAttacks[square];
+}
+
+// using my own lookups, cool
+uint64_t getPassedPawnMask( int32_t square, int32_t colorToMove )
+{
+	return passedPawnMasks[colorToMove][square];
+}
