@@ -91,8 +91,8 @@ inline bool see( const Board& board, Move move, int32_t threshold )
 
 	EColor color = board.getOtherColorToMove();
 	// get the pieces, for detecting revealed attackers
-	const uint64_t bishops = board.getPieceBitboard( EPieceType::Bishop ) | board.getPieceBitboard( EPieceType::Queen );
-	const uint64_t rooks = board.getPieceBitboard( EPieceType::Rook ) | board.getPieceBitboard( EPieceType::Queen );
+	const uint64_t bishops = board.getPieceTypeBitboard( EPieceType::Bishop ) | board.getPieceTypeBitboard( EPieceType::Queen );
+	const uint64_t rooks = board.getPieceTypeBitboard( EPieceType::Rook ) | board.getPieceTypeBitboard( EPieceType::Queen );
 	// generate the attackers (not including the first move)
 	uint64_t attackers = board.getAttackers( end ) & occupied;
 	while( true )

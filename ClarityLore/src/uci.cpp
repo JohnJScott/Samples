@@ -145,15 +145,16 @@ static void go( std::vector<std::string> tokens )
 		{
 			// probe endgame tt at root
 			std::array<uint32_t, TB_MAX_MOVES> results = {};
-			uint32_t probeResult = tb_probe_root( board.getColoredBitboard( 1 ),
-				board.getColoredBitboard( 0 ),
-				board.getPieceBitboard( EPieceType::King ),
-				board.getPieceBitboard( EPieceType::Queen ),
-				board.getPieceBitboard( EPieceType::Rook ),
-				board.getPieceBitboard( EPieceType::Bishop ),
-				board.getPieceBitboard( EPieceType::Knight ),
-				board.getPieceBitboard( EPieceType::Pawn ),
-				board.getFiftyMoveCount() * 2,
+			uint32_t probeResult = tb_probe_root(
+					board.getColoredBitboard( EColor::White ),
+				board.getColoredBitboard( EColor::Black ),
+				board.getPieceTypeBitboard( EPieceType::King ),
+				board.getPieceTypeBitboard( EPieceType::Queen ),
+				board.getPieceTypeBitboard( EPieceType::Rook ),
+				board.getPieceTypeBitboard( EPieceType::Bishop ),
+				board.getPieceTypeBitboard( EPieceType::Knight ),
+				board.getPieceTypeBitboard( EPieceType::Pawn ),
+				board.getFiftyMoveCount() << 1,
 				0,
 				board.getEnPassantIndex() == 64 ? 0 : board.getEnPassantIndex(),
 				board.getColorToMove(),

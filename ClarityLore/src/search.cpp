@@ -101,11 +101,11 @@ int16_t Engine::qSearch( Board& board, int32_t alpha, int32_t beta, int16_t ply 
 	}
 
 	// corrections
-	const int32_t ctm = board.getColorToMove();
-	int32_t chpawnHash = board.getPawnHashIndex() & Corrhist::mask;
-	std::array<int32_t, 2> nonPawnHash = board.getNonPawnHash();
-	int32_t majorHash = board.getMajorHash();
-	int32_t minorHash = board.getMinorHash();
+	const EColor ctm = board.getColorToMove();
+	uint32_t chpawnHash = board.getPawnHashIndex();
+	std::array<uint32_t, 2> nonPawnHash = board.getNonPawnHash();
+	uint32_t majorHash = board.getMajorHash();
+	uint32_t minorHash = board.getMinorHash();
 	staticEval = info.corrhist.correct( ctm, chpawnHash, staticEval, nonPawnHash, majorHash, minorHash );
 
 	// adjust staticEval to TT score if it's good enough
@@ -352,11 +352,11 @@ int16_t Engine::negamax( Board& board, int32_t depth, int32_t alpha, int32_t bet
 	}
 
 	// corrections
-	const int32_t ctm = board.getColorToMove();
-	int32_t chpawnHash = board.getPawnHashIndex() & Corrhist::mask;
-	std::array<int32_t, 2> nonPawnHash = board.getNonPawnHash();
-	int32_t majorHash = board.getMajorHash();
-	int32_t minorHash = board.getMinorHash();
+	const EColor ctm = board.getColorToMove();
+	uint32_t chpawnHash = board.getPawnHashIndex();
+	std::array<uint32_t, 2> nonPawnHash = board.getNonPawnHash();
+	uint32_t majorHash = board.getMajorHash();
+	uint32_t minorHash = board.getMinorHash();
 	staticEval = info.corrhist.correct( ctm, chpawnHash, staticEval, nonPawnHash, majorHash, minorHash );
 	int32_t correction = staticEval - originalStaticEval;
 	bool corrhistUncertain = std::abs( correction ) > chUncertaintyMargin.value;
@@ -682,7 +682,7 @@ int16_t Engine::negamax( Board& board, int32_t depth, int32_t alpha, int32_t bet
 					const EColor colorToMove = board.getColorToMove();
 					// testing berserk history bonus
 					int32_t bonus = static_cast<int32_t>( std::min( hstMaxBonus.value, hstAdder.value * depth - hstSubtractor.value ) );
-					int32_t hash2 = board.getPawnHashIndex();
+					uint32_t hash2 = board.getPawnHashIndex();
 					if( isQuiet )
 					{
 						// adds to the move's history and adjusts the killer move accordingly
@@ -747,7 +747,7 @@ int16_t Engine::negamax( Board& board, int32_t depth, int32_t alpha, int32_t bet
 
 	if( !inCheck && ( bestMove == Move() || !bestIsCapture ) && !( bestScore >= beta && bestScore <= staticEval ) && !( bestMove == Move() && bestScore >= staticEval ) )
 	{
-		info.corrhist.push( chpawnHash, ctm, bestScore, staticEval, depth, nonPawnHash, majorHash, minorHash );
+		info.corrhist.push( ctm, chpawnHash, staticEval, nonPawnHash, majorHash, minorHash, bestScore, depth );
 	}
 
 	// push to TT
@@ -762,7 +762,7 @@ int16_t Engine::negamax( Board& board, int32_t depth, int32_t alpha, int32_t bet
 }
 
 // fetches the PV line from the table
-std::string Engine::getPV()
+std::string Engine::getPV() const
 {
 	std::string pv;
 	for( int32_t i = 0; i < info.stack[0].pvLength; i++ )
@@ -772,7 +772,7 @@ std::string Engine::getPV()
 	return pv;
 }
 
-void Engine::outputInfo( const Board& board, int32_t score, int32_t depth, int32_t elapsedTime )
+void Engine::outputInfo( const Board& board, int32_t score, int32_t depth, int32_t elapsedTime ) const
 {
 	//std::cout << "root pv length: " << info.stack[0].pvLength << std::endl;
 	std::string scoreString = " score ";

@@ -171,8 +171,16 @@ double runGame( Engine& engine, std::vector<std::string>& fenVector, Board board
 		}
 		else
 		{
-			if( board.isRepeatedPosition() ) return 0.5;
-			if( board.getFiftyMoveCount() >= 50 ) return 0.5;
+			if( board.isRepeatedPosition() )
+			{
+				return 0.5;
+			}
+
+			if( board.getFiftyMoveCount() >= 50 )
+			{
+				return 0.5;
+			}
+
 			// checkmate check
 			// get moves
 			std::array<Move, 256> PLmoves;

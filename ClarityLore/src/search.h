@@ -58,6 +58,6 @@ private:
 	void updateNoisyHistory( const int32_t colorToMove, const int32_t piece, const int32_t end, const int32_t victim, const int32_t bonus, const bool endAttack );
 	void updateQSHistory( const int32_t colorToMove, const int32_t piece, const int32_t end, const int32_t victim, const int32_t bonus );
 	int16_t negamax( Board& board, int32_t depth, int32_t alpha, int32_t beta, int16_t ply, bool nmpAllowed, bool isCutNode );
-	std::string getPV();
-	void outputInfo( const Board& board, int32_t score, int32_t depth, int32_t elapsedTime );
+	std::string getPV() const;
+	void outputInfo( const Board& board, int32_t score, int32_t depth, int32_t elapsedTime ) const;
 };

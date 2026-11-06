@@ -239,10 +239,10 @@ private:
 		for( int32_t i = noisyEnd; i < totalMoves; i++ )
 		{
 			Move move = moves[i];
-			const uint8_t end = move.getEndSquare();
-			const uint8_t start = move.getStartSquare();
+			const int8_t end = move.getEndSquare();
+			const int8_t start = move.getStartSquare();
 			const EPieceType pieceType = getType( board.pieceAtIndex( start ) );
-			int32_t hash = board.getPawnHashIndex();
+			uint32_t hash = board.getPawnHashIndex();
 			// read from history
 			moveScores[i] = info.historyTable[colorToMove][start][board.squareIsUnderAttack( start )][end][board.squareIsUnderAttack( end )]
 				+ ( ply > 0 ? ( *info.stack[ply - 1].ch_entry )[colorToMove][pieceType][end] : 0 )

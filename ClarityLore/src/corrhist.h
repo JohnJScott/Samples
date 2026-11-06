@@ -17,27 +17,27 @@
 */
 #pragma once
 
+#include <cmath>
+
 #include "globals.h"
 #include "tunables.h"
 
 struct Corrhist
 {
-	static constexpr uint64_t size = 16384;
-	static constexpr uint64_t mask = size - 1;
+	std::array<std::array<int32_t, EColor::ColorCount>, corrHistSize> pawnTable;
+	std::array<std::array<std::array<int32_t, EColor::ColorCount>, EColor::ColorCount>, corrHistSize> nonPawnTables;
+	std::array<std::array<int32_t, EColor::ColorCount>, corrHistSize> majorTable;
+	std::array<std::array<int32_t, EColor::ColorCount>, corrHistSize> minorTable;
 
-	std::array<std::array<int32_t, 2>, size> pawnTable;
-	std::array<std::array<std::array<int32_t, 2>, 2>, size> nonPawnTables;
-	std::array<std::array<int32_t, 2>, size> majorTable;
-	std::array<std::array<int32_t, 2>, size> minorTable;
-
-	inline int32_t correct( int32_t ctm, int32_t pawnHash, int32_t staticEval, std::array<int32_t, EColor::ColorCount> nonPawnHashes, int32_t majorHash, int32_t minorHash )
+	inline int32_t correct( EColor colorToMove, uint32_t pawnHash, int32_t staticEval, const std::array<uint32_t, EColor::ColorCount>& nonPawnHashes, uint32_t majorHash, uint32_t minorHash ) const
 	{
-		int32_t pawn_correction = static_cast<int32_t>( ( pawnTable[pawnHash][ctm] * pawnChWeight.value ) / 512.0 );
-		int32_t non_pawn_correction = static_cast< int32_t >( ( nonPawnTables[nonPawnHashes[ctm]][ctm][ctm] + nonPawnTables[nonPawnHashes[1 - ctm]][ctm][1 - ctm] * nonpawnChWeight.value ) / 512.0 );
-		int32_t major_correction = static_cast< int32_t >( ( majorTable[majorHash][ctm] * majorChWeight.value ) / 512.0 );
-		int32_t minor_correction = static_cast< int32_t >( ( minorTable[minorHash][ctm] * minorChWeight.value ) / 512.0 );
-		int32_t correction = pawn_correction + non_pawn_correction + major_correction + minor_correction;
-		return static_cast< int32_t >( ( staticEval + ( correction / chScale.value ) ) );
+		double pawn_correction = ( pawnTable[pawnHash][colorToMove] * pawnChWeight.value ) / 512.0;
+		double non_pawn_correction = ( ( nonPawnTables[nonPawnHashes[colorToMove]][colorToMove][colorToMove] + nonPawnTables[nonPawnHashes[getOtherColor( colorToMove )]][colorToMove][getOtherColor( colorToMove )] ) * nonpawnChWeight.value ) / 512.0;
+		double major_correction = ( majorTable[majorHash][colorToMove] * majorChWeight.value ) / 512.0;
+		double minor_correction = ( minorTable[minorHash][colorToMove] * minorChWeight.value ) / 512.0;
+		double correction = pawn_correction + non_pawn_correction + major_correction + minor_correction;
+		// lround rather than a cast: truncation biases every negative correction toward zero.
+		return static_cast< int32_t >( std::lround( staticEval + ( correction / chScale.value ) ) );
 	}
 
 	inline void clear()
@@ -48,30 +48,34 @@ struct Corrhist
 		std::memset( minorTable.data(), 0, sizeof( minorTable ) );
 	}
 
-	inline void push( int32_t pawnHash, int32_t ctm, int32_t bestScore, int32_t staticEval, int32_t depth, std::array<int32_t, EColor::ColorCount> nonPawnHashes, int32_t majorHash, int32_t minorHash )
+	inline void push( EColor colorToMove, uint32_t pawnHash, int32_t staticEval, const std::array<uint32_t, EColor::ColorCount>& nonPawnHashes, uint32_t majorHash, uint32_t minorHash, int32_t bestScore, int32_t depth )
 	{
 		int32_t error = bestScore - staticEval;
-		int32_t scaled_bonus = static_cast< int32_t >( error * chScale.value );
+		double scaled_bonus = error * chScale.value;
 		const int32_t weight = std::min( depth - 1, 16 );
 
-		int32_t& pawnScore = pawnTable[pawnHash][ctm];
-		pawnScore = static_cast< int32_t >( ( pawnScore * ( chScale.value - weight ) + scaled_bonus * weight ) / chScale.value );
-		pawnScore = std::clamp( pawnScore, static_cast<int32_t>( chMin.value * chScale.value ), static_cast<int32_t>( chMax.value * chScale.value ) );
+		double pawnScore = pawnTable[pawnHash][colorToMove];
+		pawnScore = ( pawnScore * ( chScale.value - weight ) + scaled_bonus * weight ) / chScale.value;
+		pawnScore = std::clamp( pawnScore, chMin.value * chScale.value, chMax.value * chScale.value );
+		pawnTable[pawnHash][colorToMove] = static_cast<int32_t>( std::lround( pawnScore ) );
 
-		for( int32_t color = 0; color < 2; color++ )
+		for( EColor color : { EColor::Black, EColor::White } )
 		{
-			int32_t& nonPawnScore = nonPawnTables[nonPawnHashes[color]][ctm][color];
-			nonPawnScore = static_cast< int32_t >( ( nonPawnScore * ( chScale.value - weight ) + scaled_bonus * weight ) / chScale.value );
-			nonPawnScore = std::clamp( nonPawnScore, static_cast<int32_t>( chMin.value * chScale.value ), static_cast<int32_t>( chMax.value * chScale.value ) );
+			double nonPawnScore = nonPawnTables[nonPawnHashes[color]][colorToMove][color];
+			nonPawnScore = ( nonPawnScore * ( chScale.value - weight ) + scaled_bonus * weight ) / chScale.value;
+			nonPawnScore = std::clamp( nonPawnScore, chMin.value * chScale.value, chMax.value * chScale.value );
+			nonPawnTables[nonPawnHashes[color]][colorToMove][color] = static_cast<int32_t>( std::lround( nonPawnScore ) );
 		}
 
-		int32_t& majorScore = majorTable[majorHash][ctm];
-		majorScore = static_cast< int32_t >( ( majorScore * ( chScale.value - weight ) + scaled_bonus * weight ) / chScale.value );
-		majorScore = std::clamp( majorScore, static_cast<int32_t>( chMin.value * chScale.value ), static_cast<int32_t>( chMax.value * chScale.value ) );
+		double majorScore = majorTable[majorHash][colorToMove];
+		majorScore = ( majorScore * ( chScale.value - weight ) + scaled_bonus * weight ) / chScale.value;
+		majorScore = std::clamp( majorScore, chMin.value * chScale.value, chMax.value * chScale.value );
+		majorTable[majorHash][colorToMove] = static_cast<int32_t>( std::lround( majorScore ) );
 
-		int32_t& minorScore = minorTable[minorHash][ctm];
-		minorScore = static_cast< int32_t >( ( minorScore * ( chScale.value - weight ) + scaled_bonus * weight ) / chScale.value );
-		minorScore = std::clamp( minorScore, static_cast<int32_t>( chMin.value * chScale.value ), static_cast<int32_t>( chMax.value * chScale.value ) );
+		double minorScore = minorTable[minorHash][colorToMove];
+		minorScore = ( minorScore * ( chScale.value - weight ) + scaled_bonus * weight ) / chScale.value;
+		minorScore = std::clamp( minorScore, chMin.value * chScale.value, chMax.value * chScale.value );
+		minorTable[minorHash][colorToMove] = static_cast<int32_t>( std::lround( minorScore ) );
 	}
 };
 

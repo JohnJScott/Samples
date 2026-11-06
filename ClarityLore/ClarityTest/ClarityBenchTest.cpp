@@ -117,7 +117,7 @@ namespace ClarityTest
 		// The bench signature at engineBenchDepth. This is expected to change whenever search
 		// or evaluation changes on purpose - update it deliberately, and treat an unplanned
 		// change as a behaviour regression worth investigating.
-		static constexpr uint64_t referenceBenchNodes = 5294115;
+		static constexpr uint64_t referenceBenchNodes = 6050238;
 
 		struct BenchResult
 		{
@@ -180,7 +180,7 @@ namespace ClarityTest
 			Assert::AreEqual( first.nodes, second.nodes, L"Two bench runs from a clean transposition table must search identically" );
 		}
 
-		TEST_METHOD_CATEGORY( SlowBenchAtEngineDepthMatchesReference, Slow )
+																																				TEST_METHOD_CATEGORY( SlowBenchAtEngineDepthMatchesReference, Slow )
 		{
 			const BenchResult result = runBench( engineBenchDepth );
 

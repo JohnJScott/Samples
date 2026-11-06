@@ -37,7 +37,7 @@ extern bool useSyzygy;
 
 // Note: WHITE, BLACK values are reverse of Stockfish
 enum EColor
-	: uint8_t
+	: int8_t
 {
 	Black,
 	White,
@@ -46,7 +46,7 @@ enum EColor
 
 // Each type of piece. Or'd with 8 for white pieces. Starting at 1 to match the PieceType enum.
 enum EPieceType
-	: uint8_t
+	: int8_t
 {
 	NoneType = 0,
 	Pawn,
@@ -59,7 +59,7 @@ enum EPieceType
 };
 
 enum EPiece
-	: uint8_t
+	: int8_t
 {
 	None = 0,
 
@@ -94,6 +94,9 @@ constexpr int8_t numFiles = 8;
 constexpr int8_t numBoardSquares = numRanks * numFiles;
 constexpr int32_t ColorStride = 64 * 6;
 
+static constexpr uint64_t corrHistSize = 16384;
+static constexpr uint64_t corrHistMask = corrHistSize - 1;
+
 constexpr std::array<std::string_view, 64> squareNames =
 {
 	"a1","b1","c1","d1","e1","f1","g1","h1",
@@ -119,7 +122,7 @@ struct BoardState
 	std::array<uint64_t, EColor::ColorCount> nonPawnHashes;
 
 	std::array<EPiece, numBoardSquares> mailbox;
-	std::array<uint8_t, EColor::ColorCount> kingSquares;
+	std::array<int8_t, EColor::ColorCount> kingSquares;
 
 	uint64_t zobristHash;
 	uint64_t pawnHash;
@@ -127,7 +130,7 @@ struct BoardState
 	uint64_t minorHash;
 	uint64_t threats;
 
-	uint8_t enPassantIndex;
+	int8_t enPassantIndex;
 	uint8_t hundredPlyCounter;
 	uint8_t castlingRights;
 };
@@ -334,6 +337,11 @@ constexpr bool refreshRequired( int32_t color, int32_t oldKingSquare, int32_t ne
 	return inputBuckets[oldKingSquare] != inputBuckets[newKingSquare];
 }
 
+inline int8_t getSquare( const int8_t rank, const int8_t file )
+{
+	return static_cast< int8_t >( ( ( rank - 1 ) << 3 ) | static_cast< int32_t >( file ) );
+}
+
 // the board itself
 struct Board
 {
@@ -358,6 +366,16 @@ public:
 	uint64_t getOccupiedBitboard() const;
 	uint64_t getColoredPieceBitboard( EColor color, EPieceType piece ) const;
 
+	bool blackToMove() const
+	{
+		return colorToMove == EColor::Black;
+	}
+
+	bool whiteToMove() const
+	{
+		return colorToMove == EColor::White;
+	}
+
 	EColor getColorToMove() const
 	{
 		return colorToMove;
@@ -376,25 +394,87 @@ public:
 	void changeColor();
 	void undoChangeColor();
 	int32_t getEvaluation() const;
-	int32_t getCastlingRights() const;
-	int32_t getEnPassantIndex() const;
+
+	int32_t getCastlingRights() const
+	{
+		return stateHistory.back().castlingRights;
+	}
+
+	int32_t getEnPassantIndex() const
+	{
+		return stateHistory.back().enPassantIndex;
+	}
+
 	uint64_t fullZobristRegen();
 	bool isRepeatedPosition() const;
 	bool isLegalMove( const Move& move ) const;
-	uint64_t getAttackers( int32_t square ) const;
-	uint64_t getColoredBitboard( int32_t color ) const;
-	uint64_t getPieceBitboard( int32_t piece ) const;
-	int32_t getFiftyMoveCount() const;
-	uint64_t getZobristHash() const;
-	std::array<int32_t, 2> getNonPawnHash() const;
-	int32_t getMajorHash() const;
-	int32_t getMinorHash() const;
-	BoardState getBoardState() const;
+	uint64_t getAttackers( int8_t square ) const;
+
+	uint64_t getColoredBitboard( EColor color ) const
+	{
+		return stateHistory.back().coloredBitboards[color];
+	}
+
+	uint64_t getPieceTypeBitboard( EPieceType piece ) const
+	{
+		return stateHistory.back().pieceBitboards[piece];
+	}
+
+	int32_t getFiftyMoveCount() const
+	{
+		return stateHistory.back().hundredPlyCounter / 2;
+	}
+
+	uint64_t getZobristHash() const
+	{
+		return stateHistory.back().zobristHash;
+	}
+
+	std::array<uint32_t, 2> getNonPawnHash() const
+	{
+		std::array<uint32_t, 2> clipped =
+		{
+			static_cast<uint32_t>( stateHistory.back().nonPawnHashes[EColor::Black] & corrHistMask ), 
+			static_cast<uint32_t>( stateHistory.back().nonPawnHashes[EColor::White] & corrHistMask )
+		};
+		return clipped;
+	}
+
+	uint32_t getMajorHash() const
+	{
+		return stateHistory.back().majorHash & corrHistMask;
+	}
+
+	uint32_t getMinorHash() const
+	{
+		return stateHistory.back().minorHash & corrHistMask;
+	}
+
+	BoardState getBoardState() const
+	{
+		return stateHistory.back();
+	}
+
 	// uint64_t keyAfter( const Move move ) const;
-	int32_t getPlyCount() const;
+
+	int32_t getPlyCount() const
+	{
+		return plyCount;
+	}
+
 	bool isPKEndgame() const;
-	int32_t getPawnHashIndex() const;
-	uint64_t getThreats() const;
+
+	uint32_t getPawnHashIndex() const
+	{
+		// last 15 bits
+		return stateHistory.back().pawnHash & corrHistMask;
+	}
+
+	uint64_t getThreats() const
+	{
+		return stateHistory.back().threats;
+	}
+
 	uint64_t calculateThreats() const;
 	bool isPseudolegal( Move move ) const;
 	int32_t getNoisies( std::array<Move, 256>& moves, int32_t totalMoves ) const;

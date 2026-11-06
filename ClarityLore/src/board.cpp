@@ -103,7 +103,7 @@ void Board::displayLetters() const
 		std::cout << std::to_string( rank ) << " ";
 		for( int8_t file = 0; file < numFiles; file++ )
 		{
-			EPiece piece = pieceAtIndex( ( ( rank - 1 ) << 3 ) | file );
+			EPiece piece = pieceAtIndex( getSquare( rank, file ) );
 			std::cout << pieceToChar[piece] << " ";
 		}
 
@@ -120,7 +120,7 @@ void Board::displayPieces() const
 		std::cout << std::to_string( rank ) << " ";
 		for( int8_t file = 0; file < numFiles; file++ )
 		{
-			EPiece piece = pieceAtIndex( ( ( rank - 1 ) << 3 ) | file );
+			EPiece piece = pieceAtIndex( getSquare( rank, file ) );
 			std::cout << pieceToPieceChar[piece] << " ";
 		}
 
@@ -151,7 +151,7 @@ void Board::toString() const
 		std::cout << "En passant square: " << squareNames[stateHistory.back().enPassantIndex] << '\n';
 	}
 
-	std::cout << "Color to move: " << ( colorToMove == EColor::Black ? "black" : "white" ) << '\n';
+	std::cout << "Color to move: " << ( blackToMove() ? "black" : "white" ) << '\n';
 	std::cout << "Evaluation: " << std::to_string( getEvaluation() ) << '\n';
 }
 
@@ -219,7 +219,7 @@ Board::Board( const std::string& fen )
 
 	// convert color to move into 0 or 1, segment 2
 	colorToMove = ( segments[1] == "w" ? EColor::White : EColor::Black );
-	if( colorToMove == EColor::White )
+	if( whiteToMove() )
 	{
 		stateHistory.back().zobristHash ^= zobColorToMove;
 	}
@@ -295,7 +295,7 @@ std::string Board::getFenString() const
 		int8_t numEmptyFiles = 0;
 		for( int8_t file = 0; file < numFiles; file++ )
 		{
-			EPiece piece = pieceAtIndex( ( ( rank - 1 ) << 3 ) | file );
+			EPiece piece = pieceAtIndex( getSquare( rank, file ) );
 			if( piece != EPiece::None )
 			{
 				if( numEmptyFiles != 0 )
@@ -320,7 +320,7 @@ std::string Board::getFenString() const
 
 	// color to move
 	fen += ' ';
-	fen += ( colorToMove == EColor::Black ? 'b' : 'w' );
+	fen += ( blackToMove() ? 'b' : 'w' );
 	// castling rights
 	fen += ' ';
 	bool thingAdded = false;
@@ -377,11 +377,9 @@ std::string Board::getFenString() const
 
 template <bool UpdateNNUE> void Board::addPiece( int8_t square, EPiece piece )
 {
-	assert( piece != EPiece::None );
-	assert( piece < 16 );
-	assert( square < 64 );
+	assert( piece != EPiece::None && piece < EPiece::PieceCount );
+	assert( square >= 0 && square < 64 );
 	assert( pieceAtIndex( square ) == EPiece::None );
-	assert( square >= 0 );
 
 	const uint64_t bitboardSquare = squareToBitboard[square];
 	//std::cout << "Adding piece of type " << std::to_string(type) << " at index " << std::to_string(square) << '\n';
@@ -415,11 +413,9 @@ template <bool UpdateNNUE> void Board::addPiece( int8_t square, EPiece piece )
 
 template <bool UpdateNNUE> void Board::removePiece( int8_t square, EPiece piece )
 {
-	assert( piece != EPiece::None );
-	assert( piece < 16 );
-	assert( square < 64 );
+	assert( piece != EPiece::None && piece < EPiece::PieceCount );
+	assert( square >= 0 && square < 64 );
 	assert( pieceAtIndex( square ) == piece );
-	assert( square >= 0 );
 
 	const uint64_t bitboardSquare = squareToBitboard[square];
 	stateHistory.back().coloredBitboards[getColor( piece )] ^= bitboardSquare;
@@ -481,11 +477,11 @@ int32_t Board::getMoves( std::array<Move, 256>& moves ) const
 	int32_t totalMoves = 0;
 
 	// castling
-	if( ( stateHistory.back().castlingRights & kingRightMasks[1 - colorToMove] ) != 0 )
+	if( ( stateHistory.back().castlingRights & kingRightMasks[getOtherColorToMove()] ) != 0 )
 	{
 		if( !isInCheck() )
 		{
-			if( colorToMove == EColor::White )
+			if( whiteToMove() )
 			{
 				if( ( stateHistory.back().castlingRights & 1 ) != 0 && ( occupiedBitboard & 0x60 ) == 0 && !squareIsUnderAttack( 5 ) )
 				{
@@ -552,24 +548,25 @@ int32_t Board::getMoves( std::array<Move, 256>& moves ) const
 	}
 
 	// pawn pushes
-	uint64_t pawnBitboard = getColoredPieceBitboard( colorToMove, EPieceType::Pawn );
-	uint64_t emptyBitboard = ~occupiedBitboard;
+	const uint64_t pawnBitboard = getColoredPieceBitboard( colorToMove, EPieceType::Pawn );
+	const uint64_t emptyBitboard = ~occupiedBitboard;
 	uint64_t pawnPushes = getPawnPushes( pawnBitboard, emptyBitboard, colorToMove );
 	uint64_t doublePawnPushes = getDoublePawnPushes( pawnPushes, emptyBitboard, colorToMove );
 	uint64_t pawnPushPromotions = pawnPushes & getRankMask( 7 * colorToMove );
 	pawnPushes ^= pawnPushPromotions;
+
 	while( pawnPushes != 0 )
 	{
-		int8_t index = popLSB( pawnPushes );
-		int8_t startSquare = index + directionalOffsets[colorToMove];
+		const int8_t index = popLSB( pawnPushes );
+		const int8_t startSquare = index + directionalOffsets[colorToMove];
 		moves[totalMoves] = Move( startSquare, index, Normal );
 		totalMoves++;
 	}
 
 	while( doublePawnPushes != 0 )
 	{
-		int8_t index = popLSB( doublePawnPushes );
-		int8_t startSquare = index + ( directionalOffsets[colorToMove] << 1 );
+		const int8_t index = popLSB( doublePawnPushes );
+		const int8_t startSquare = index + ( directionalOffsets[colorToMove] << 1 );
 		assert( getType( pieceAtIndex( startSquare ) ) == EPieceType::Pawn );
 		moves[totalMoves] = Move( startSquare, index, DoublePawnPush );
 		totalMoves++;
@@ -577,11 +574,11 @@ int32_t Board::getMoves( std::array<Move, 256>& moves ) const
 
 	while( pawnPushPromotions != 0 )
 	{
-		int8_t index = popLSB( pawnPushPromotions );
-		int8_t startSquare = index + directionalOffsets[colorToMove];
-		for( int32_t piece = EPieceType::Knight; piece < EPieceType::King; piece++ )
+		const int8_t index = popLSB( pawnPushPromotions );
+		const int8_t startSquare = index + directionalOffsets[colorToMove];
+		for( EPieceType pieceType : { EPieceType::Knight, EPieceType::Bishop, EPieceType::Rook, EPieceType::Queen } )
 		{
-			moves[totalMoves] = Move( startSquare, index, promotions[piece] );
+			moves[totalMoves] = Move( startSquare, index, promotions[pieceType] );
 			totalMoves++;
 		}
 	}
@@ -593,13 +590,13 @@ int32_t Board::getMoves( std::array<Move, 256>& moves ) const
 		capturable |= squareToBitboard[stateHistory.back().enPassantIndex];
 	}
 
-	uint64_t leftCaptures = ( colorToMove == EColor::Black ? pawnBitboard >> 9 : pawnBitboard << 7 );
+	uint64_t leftCaptures = ( blackToMove() ? pawnBitboard >> 9 : pawnBitboard << 7 );
 	leftCaptures &= ~getFileMask( 7 );
 	leftCaptures &= capturable;
 	uint64_t leftCapturePromotions = leftCaptures & getRankMask( 7 * colorToMove );
 	leftCaptures ^= leftCapturePromotions;
 
-	uint64_t rightCaptures = ( colorToMove == EColor::Black ? pawnBitboard >> 7 : pawnBitboard << 9 );
+	uint64_t rightCaptures = ( blackToMove() ? pawnBitboard >> 7 : pawnBitboard << 9 );
 	rightCaptures &= ~getFileMask( 0 );
 	rightCaptures &= capturable;
 	uint64_t rightCapturePromotions = rightCaptures & getRankMask( 7 * colorToMove );
@@ -608,7 +605,7 @@ int32_t Board::getMoves( std::array<Move, 256>& moves ) const
 	while( leftCaptures != 0 )
 	{
 		int8_t index = popLSB( leftCaptures );
-		int8_t startSquare = index + ( colorToMove == EColor::Black ? 9 : -7 );
+		int8_t startSquare = index + ( blackToMove() ? 9 : -7 );
 		moves[totalMoves] = Move( startSquare, index, ( index == stateHistory.back().enPassantIndex ? EnPassant : Normal ) );
 		totalMoves++;
 	}
@@ -616,7 +613,7 @@ int32_t Board::getMoves( std::array<Move, 256>& moves ) const
 	while( rightCaptures != 0 )
 	{
 		int8_t index = popLSB( rightCaptures );
-		int8_t startSquare = index + ( colorToMove == EColor::Black ? 7 : -9 );
+		int8_t startSquare = index + ( blackToMove() ? 7 : -9 );
 		moves[totalMoves] = Move( startSquare, index, ( index == stateHistory.back().enPassantIndex ? EnPassant : Normal ) );
 		totalMoves++;
 	}
@@ -624,7 +621,7 @@ int32_t Board::getMoves( std::array<Move, 256>& moves ) const
 	while( leftCapturePromotions != 0 )
 	{
 		int8_t index = popLSB( leftCapturePromotions );
-		int8_t startSquare = index + ( colorToMove == EColor::Black ? 9 : -7 );
+		int8_t startSquare = index + ( blackToMove() ? 9 : -7 );
 		for( int32_t piece = EPieceType::Knight; piece < EPieceType::King; piece++ )
 		{
 			moves[totalMoves] = Move( startSquare, index, promotions[piece] );
@@ -635,7 +632,7 @@ int32_t Board::getMoves( std::array<Move, 256>& moves ) const
 	while( rightCapturePromotions != 0 )
 	{
 		int8_t index = popLSB( rightCapturePromotions );
-		int8_t startSquare = index + ( colorToMove == EColor::Black ? 7 : -9 );
+		int8_t startSquare = index + ( blackToMove() ? 7 : -9 );
 		for( int32_t piece = EPieceType::Knight; piece < EPieceType::King; piece++ )
 		{
 			moves[totalMoves] = Move( startSquare, index, promotions[piece] );
@@ -694,7 +691,7 @@ int32_t Board::getMovesQSearch( std::array<Move, 256>& moves ) const
 	while( pawnPushPromotions != 0 )
 	{
 		const int8_t index = popLSB( pawnPushPromotions );
-		const int8_t startSquare = static_cast< uint8_t >( ( index + directionalOffsets[colorToMove] ) );
+		const int8_t startSquare = index + directionalOffsets[colorToMove];
 		for( int32_t piece = EPieceType::Knight; piece < EPieceType::King; piece++ )
 		{
 			moves[totalMoves] = Move( startSquare, index, promotions[piece] );
@@ -703,19 +700,19 @@ int32_t Board::getMovesQSearch( std::array<Move, 256>& moves ) const
 	}
 
 	// captures
-	uint64_t capturable = stateHistory.back().coloredBitboards[1 - colorToMove];
+	uint64_t capturable = stateHistory.back().coloredBitboards[getOtherColorToMove()];
 	if( stateHistory.back().enPassantIndex != 64 )
 	{
 		capturable |= squareToBitboard[stateHistory.back().enPassantIndex];
 	}
 
-	uint64_t leftCaptures = ( colorToMove == EColor::Black ? pawnBitboard >> 9 : pawnBitboard << 7 );
+	uint64_t leftCaptures = ( blackToMove() ? pawnBitboard >> 9 : pawnBitboard << 7 );
 	leftCaptures &= ~getFileMask( 7 );
 	leftCaptures &= capturable;
 	uint64_t leftCapturePromotions = leftCaptures & getRankMask( 7 * colorToMove );
 	leftCaptures ^= leftCapturePromotions;
 
-	uint64_t rightCaptures = ( colorToMove == EColor::Black ? pawnBitboard >> 7 : pawnBitboard << 9 );
+	uint64_t rightCaptures = ( blackToMove() ? pawnBitboard >> 7 : pawnBitboard << 9 );
 	rightCaptures &= ~getFileMask( 0 );
 	rightCaptures &= capturable;
 	uint64_t rightCapturePromotions = rightCaptures & getRankMask( 7 * colorToMove );
@@ -724,7 +721,7 @@ int32_t Board::getMovesQSearch( std::array<Move, 256>& moves ) const
 	while( leftCaptures != 0 )
 	{
 		int8_t index = popLSB( leftCaptures );
-		int8_t startSquare = index + ( colorToMove == EColor::Black ? 9 : -7 );
+		int8_t startSquare = index + ( blackToMove() ? 9 : -7 );
 		moves[totalMoves] = Move( startSquare, index, ( index == stateHistory.back().enPassantIndex ? EnPassant : Normal ) );
 		totalMoves++;
 	}
@@ -732,7 +729,7 @@ int32_t Board::getMovesQSearch( std::array<Move, 256>& moves ) const
 	while( rightCaptures != 0 )
 	{
 		int8_t index = popLSB( rightCaptures );
-		int8_t startSquare = index + ( colorToMove == EColor::Black ? 7 : -9 );
+		int8_t startSquare = index + ( blackToMove() ? 7 : -9 );
 		moves[totalMoves] = Move( startSquare, index, ( index == stateHistory.back().enPassantIndex ? EnPassant : Normal ) );
 		totalMoves++;
 	}
@@ -740,7 +737,7 @@ int32_t Board::getMovesQSearch( std::array<Move, 256>& moves ) const
 	while( leftCapturePromotions != 0 )
 	{
 		int8_t index = popLSB( leftCapturePromotions );
-		int8_t startSquare = index + ( colorToMove == EColor::Black ? 9 : -7 );
+		int8_t startSquare = index + ( blackToMove() ? 9 : -7 );
 		for( int32_t piece = EPieceType::Knight; piece < EPieceType::King; piece++ )
 		{
 			moves[totalMoves] = Move( startSquare, index, promotions[piece] );
@@ -751,7 +748,7 @@ int32_t Board::getMovesQSearch( std::array<Move, 256>& moves ) const
 	while( rightCapturePromotions != 0 )
 	{
 		int8_t index = popLSB( rightCapturePromotions );
-		int8_t startSquare = index + ( colorToMove == EColor::Black ? 7 : -9 );
+		int8_t startSquare = index + ( blackToMove() ? 7 : -9 );
 		for( int32_t piece = EPieceType::Knight; piece < EPieceType::King; piece++ )
 		{
 			moves[totalMoves] = Move( startSquare, index, promotions[piece] );
@@ -847,7 +844,7 @@ template <bool PushNNUE, bool UpdateNNUE> bool Board::makeMove( Move move )
 			updates.pushBucket( end, colorToMove );
 		}
 
-		stateHistory.back().kingSquares[colorToMove] = static_cast<uint8_t>( end );
+		stateHistory.back().kingSquares[colorToMove] = end;
 	}
 
 	// actually make the move
@@ -939,7 +936,7 @@ template <bool PushNNUE, bool UpdateNNUE> bool Board::makeMove( Move move )
 
 		// double pawn push
 	case DoublePawnPush:
-		stateHistory.back().enPassantIndex = static_cast<uint8_t>( end + directionalOffsets[colorToMove] );
+		stateHistory.back().enPassantIndex = end + directionalOffsets[colorToMove];
 		break;
 
 		// en passant
@@ -995,7 +992,7 @@ template <bool PushNNUE, bool UpdateNNUE> bool Board::makeMove( Move move )
 	{
 		// so you must undo it and return false
 		undoMove<false>();
-		colorToMove = ( colorToMove == EColor::Black ) ? EColor::White : EColor::Black;
+		colorToMove = getOtherColorToMove();
 		//std::cout << "Changing Color To Move, move was illegal\n";
 		return false;
 	}
@@ -1014,7 +1011,7 @@ template <bool PushNNUE, bool UpdateNNUE> bool Board::makeMove( Move move )
 		}
 
 		// otherwise it's good, move on
-		colorToMove = ( colorToMove == EColor::Black ) ? EColor::White : EColor::Black;
+		colorToMove = getOtherColorToMove();
 		stateHistory.back().threats = calculateThreats();
 		//std::cout << "Changing Color To Move, move was legal\n";
 		stateHistory.back().zobristHash ^= zobColorToMove;
@@ -1032,7 +1029,7 @@ template <bool PushNNUE, bool UpdateNNUE> void Board::undoMove()
 	}
 
 	plyCount--;
-	colorToMove = ( colorToMove == EColor::Black ) ? EColor::White : EColor::Black;
+	colorToMove = getOtherColorToMove();
 	//std::cout << "position fen " << getFenString() << std::endl;
 	//std::cout << "Changing Color To Move in undo move\n";
 	// no zobrist update here because the saved zobrist hash is before the color changed
@@ -1049,7 +1046,7 @@ void Board::changeColor()
 	nnueState.push();
 	stateHistory.back().enPassantIndex = 64;
 	stateHistory.back().hundredPlyCounter++;
-	colorToMove = ( colorToMove == EColor::Black ) ? EColor::White : EColor::Black;
+	colorToMove = getOtherColorToMove();
 	stateHistory.back().threats = calculateThreats();
 	stateHistory.back().zobristHash ^= zobColorToMove;
 }
@@ -1058,7 +1055,7 @@ void Board::undoChangeColor()
 {
 	stateHistory.pop_back();
 	nnueState.pop();
-	colorToMove = ( colorToMove == EColor::Black ) ? EColor::White : EColor::Black;
+	colorToMove = getOtherColorToMove();
 }
 
 int32_t Board::getEvaluation() const
@@ -1079,16 +1076,6 @@ int32_t Board::getEvaluation() const
 	return eval;
 }
 
-int32_t Board::getCastlingRights() const
-{
-	return stateHistory.back().castlingRights;
-}
-
-int32_t Board::getEnPassantIndex() const
-{
-	return stateHistory.back().enPassantIndex;
-}
-
 void initializeZobrist()
 {
 	// random number stuff
@@ -1098,11 +1085,11 @@ void initializeZobrist()
 	// color to move
 	zobColorToMove = dis( gen );
 	// squares
-	for( int32_t i = 0; i < 64; i++ )
+	for( int32_t square = 0; square < numBoardSquares; square++ )
 	{
 		for( int32_t j = 0; j < 14; j++ )
 		{
-			zobTable[i][j] = dis( gen );
+			zobTable[square][j] = dis( gen );
 		}
 	}
 }
@@ -1114,13 +1101,13 @@ uint64_t Board::fullZobristRegen()
 	uint64_t result = 0;
 	while( mask != 0 )
 	{
-		int8_t index = popLSB( mask );
-		EPiece piece = pieceAtIndex( index );
+		const int8_t index = popLSB( mask );
+		const EPiece piece = pieceAtIndex( index );
 		//std::cout << "Adding piece of type " << std::to_string(piece) << " at index " << std::to_string(index) << '\n';
 		result ^= zobTable[index][piece];
 	}
 
-	if( colorToMove == EColor::White )
+	if( whiteToMove() )
 	{
 		//std::cout << "Changing Color To Move in full regen\n";
 		result ^= zobColorToMove;
@@ -1165,7 +1152,7 @@ bool Board::isLegalMove( const Move& move ) const
 	return false;
 }
 
-uint64_t Board::getAttackers( int32_t square ) const
+uint64_t Board::getAttackers( int8_t square ) const
 {
 	uint64_t occupied = getOccupiedBitboard();
 	return ( getPawnAttacks( square, EColor::Black ) & getColoredPieceBitboard( EColor::White, EPieceType::Pawn ) )
@@ -1174,38 +1161,6 @@ uint64_t Board::getAttackers( int32_t square ) const
 		| ( getRookAttacks( square, occupied ) & ( stateHistory.back().pieceBitboards[EPieceType::Rook] | stateHistory.back().pieceBitboards[EPieceType::Queen] ) )
 		| ( getBishopAttacks( square, occupied ) & ( stateHistory.back().pieceBitboards[EPieceType::Bishop] | stateHistory.back().pieceBitboards[EPieceType::Queen] ) )
 		| ( getKingAttacks( square ) & stateHistory.back().pieceBitboards[EPieceType::King] );
-}
-
-uint64_t Board::getColoredBitboard( int32_t color ) const
-{
-	return stateHistory.back().coloredBitboards[color];
-}
-
-uint64_t Board::getPieceBitboard( int32_t piece ) const
-{
-	return stateHistory.back().pieceBitboards[piece];
-}
-
-int32_t Board::getFiftyMoveCount() const
-{
-	return stateHistory.back().hundredPlyCounter / 2;
-}
-
-uint64_t Board::getZobristHash() const
-{
-	return stateHistory.back().zobristHash;
-}
-
-std::array<int32_t, 2> Board::getNonPawnHash() const
-{
-	std::array<uint64_t, EColor::ColorCount> hashes = stateHistory.back().nonPawnHashes;
-	std::array<int32_t, 2> clipped = { static_cast<int32_t>( hashes[0] & Corrhist::mask ), static_cast<int32_t>( hashes[1] & Corrhist::mask ) };
-	return clipped;
-}
-
-BoardState Board::getBoardState() const
-{
-	return stateHistory.back();
 }
 
 Board::Board( BoardState s, EColor ctm )
@@ -1241,22 +1196,11 @@ Board::Board( BoardState s, EColor ctm )
 // 	return key;
 // }
 
-int32_t Board::getPlyCount() const
-{
-	return plyCount;
-}
-
 bool Board::isPKEndgame() const
 {
-	uint64_t occupied = getOccupiedBitboard();
-	uint64_t pk = getPieceBitboard( EPieceType::Pawn ) | getPieceBitboard( EPieceType::King );
+	const uint64_t occupied = getOccupiedBitboard();
+	const uint64_t pk = getPieceTypeBitboard( EPieceType::Pawn ) | getPieceTypeBitboard( EPieceType::King );
 	return ( ( getColoredBitboard( colorToMove ) & ( occupied ^ pk ) ) == 0 );
-}
-
-int32_t Board::getPawnHashIndex() const
-{
-	// last 15 bits
-	return stateHistory.back().pawnHash & Corrhist::mask;
 }
 
 uint64_t Board::calculateThreats() const
@@ -1304,21 +1248,6 @@ uint64_t Board::calculateThreats() const
 	return threats;
 }
 
-uint64_t Board::getThreats() const
-{
-	return stateHistory.back().threats;
-}
-
-int32_t Board::getMajorHash() const
-{
-	return stateHistory.back().majorHash & Corrhist::mask;
-}
-
-int32_t Board::getMinorHash() const
-{
-	return stateHistory.back().minorHash & Corrhist::mask;
-}
-
 bool Board::isPseudolegal( Move move ) const
 {
 	const int8_t from = move.getStartSquare();
@@ -1328,7 +1257,7 @@ bool Board::isPseudolegal( Move move ) const
 	const EPiece victim = pieceAtIndex( to );
 
 	assert( piece < EPiece::PieceCount );
-	if( piece == None || getColor( piece ) != colorToMove )
+	if( piece == EPiece::None || getColor( piece ) != colorToMove )
 	{
 		return false;
 	}
@@ -1348,8 +1277,8 @@ bool Board::isPseudolegal( Move move ) const
 		}
 
 		// if the rank is wrong
-		const int32_t home = ( colorToMove == EColor::Black ) ? 7 : 0;
-		if( from / 8 != home || to / 8 != home )
+		const int32_t home = ( blackToMove() ) ? 7 : 0;
+		if( ( from >> 3 ) != home || ( to >> 3 ) != home )
 		{
 			return false;
 		}
@@ -1363,7 +1292,7 @@ bool Board::isPseudolegal( Move move ) const
 
 		const uint64_t occ = getOccupiedBitboard();
 		// Check specific castling move types
-		if( colorToMove == EColor::White )
+		if( whiteToMove() )
 		{ 
 			// White to move
 			if( from == 4 && to == 6 && flag == castling[0] )
@@ -1402,23 +1331,24 @@ bool Board::isPseudolegal( Move move ) const
 			return to == stateHistory.back().enPassantIndex && ( getPawnAttacks( from, colorToMove ) & ( 1ULL << to ) ) != 0;
 		}
 
-		const int32_t fromRank = from / 8;
-		const int32_t toRank = to / 8;
+		const int8_t fromRank = from >> 3;
+		const int8_t toRank = to >> 3;
+
 		// moving backwards is bad
-		if( ( colorToMove == EColor::Black && toRank >= fromRank ) || ( colorToMove == EColor::White && toRank <= fromRank ) )
+		if( ( blackToMove() && toRank >= fromRank ) || ( whiteToMove() && toRank <= fromRank ) )
 		{
 			return false;
 		}
 
-		const int32_t promoRank = colorToMove == EColor::Black ? 0 : 7;
+		const int8_t promoRank = blackToMove() ? 0 : 7;
 		// promotion to wrong rank or nonpromotion on back rank
 		if( ( flag >= promotions[EPieceType::Knight] ) != ( toRank == promoRank ) )
 		{
 			return false;
 		}
 
-		const int32_t fromFile = from & 7;
-		const int32_t toFile = to & 7;
+		const int8_t fromFile = from & 7;
+		const int8_t toFile = to & 7;
 		if( fromFile != toFile )
 		{
 			const uint64_t pawnAttacks = getPawnAttacks( from, colorToMove );
@@ -1430,21 +1360,21 @@ bool Board::isPseudolegal( Move move ) const
 				return false;
 			}
 		}
-		else if( victim != None )
+		else if( victim != EPiece::None )
 		{
 			// forward capture
 			return false;
 		}
 
-		const int32_t rankDelta = std::abs( toRank - fromRank );
-		int32_t maxDelta;
-		if( colorToMove == EColor::Black )
+		const int8_t rankDelta = static_cast<int8_t>( std::abs( toRank - fromRank ) );
+		int8_t maxDelta;
+		if( blackToMove() )
 		{
-			maxDelta = fromRank == 6 ? 2 : 1;
+			maxDelta = ( fromRank == 6 ) ? 2 : 1;
 		}
 		else
 		{
-			maxDelta = fromRank == 1 ? 2 : 1;
+			maxDelta = ( fromRank == 1 ) ? 2 : 1;
 		}
 
 		if( rankDelta > maxDelta )
@@ -1464,7 +1394,7 @@ bool Board::isPseudolegal( Move move ) const
 		}
 
 		// blocked double pawn push
-		if( rankDelta == 2 && ( getOccupiedBitboard() & ( 1ULL << ( to + ( colorToMove == EColor::White ? -8 : 8 ) ) ) ) )
+		if( rankDelta == 2 && ( getOccupiedBitboard() & ( 1ULL << ( to + ( whiteToMove() ? -8 : 8 ) ) ) ) )
 		{
 			return false;
 		}
@@ -1477,7 +1407,7 @@ bool Board::isPseudolegal( Move move ) const
 			return false;
 		}
 
-		uint64_t total = 0ULL;
+		uint64_t total;
 		const uint64_t occ = getOccupiedBitboard();
 		const EPieceType currentType = getType( piece );
 		if( currentType == EPieceType::Knight )
@@ -1517,31 +1447,31 @@ bool Board::isPseudolegal( Move move ) const
 // currently only generating captures, should perhaps generate pawn promotions as well but it's fine
 int32_t Board::getNoisies( std::array<Move, 256>& moves, int32_t totalMoves ) const
 {
-	uint64_t occupiedBitboard = getOccupiedBitboard();
+	const uint64_t occupiedBitboard = getOccupiedBitboard();
 
 	uint64_t mask = stateHistory.back().coloredBitboards[colorToMove] ^ getColoredPieceBitboard( colorToMove, EPieceType::Pawn );
 	while( mask != 0 )
 	{
-		int8_t startSquare = popLSB( mask );
-		EPieceType piece = getType( pieceAtIndex( startSquare ) );
+		const int8_t startSquare = popLSB( mask );
+		const EPieceType pieceType = getType( pieceAtIndex( startSquare ) );
 		uint64_t total = 0;
-		if( piece == EPieceType::Knight )
+		if( pieceType == EPieceType::Knight )
 		{
 			total = getKnightAttacks( startSquare );
 		}
-		else if( piece == EPieceType::Bishop )
+		else if( pieceType == EPieceType::Bishop )
 		{
 			total = getBishopAttacks( startSquare, occupiedBitboard );
 		}
-		else if( piece == EPieceType::Rook )
+		else if( pieceType == EPieceType::Rook )
 		{
 			total = getRookAttacks( startSquare, occupiedBitboard );
 		}
-		else if( piece == EPieceType::Queen )
+		else if( pieceType == EPieceType::Queen )
 		{
 			total = getRookAttacks( startSquare, occupiedBitboard ) | getBishopAttacks( startSquare, occupiedBitboard );
 		}
-		else if( piece == EPieceType::King )
+		else if( pieceType == EPieceType::King )
 		{
 			total = getKingAttacks( startSquare );
 		}
@@ -1554,20 +1484,20 @@ int32_t Board::getNoisies( std::array<Move, 256>& moves, int32_t totalMoves ) co
 		}
 	}
 
-	uint64_t pawnBitboard = getColoredPieceBitboard( colorToMove, EPieceType::Pawn );
+	const uint64_t pawnBitboard = getColoredPieceBitboard( colorToMove, EPieceType::Pawn );
 	uint64_t capturable = stateHistory.back().coloredBitboards[getOtherColorToMove()];
 	if( stateHistory.back().enPassantIndex != 64 )
 	{
 		capturable |= squareToBitboard[stateHistory.back().enPassantIndex];
 	}
 
-	uint64_t leftCaptures = ( colorToMove == EColor::Black ? pawnBitboard >> 9 : pawnBitboard << 7 );
+	uint64_t leftCaptures = ( blackToMove() ? pawnBitboard >> 9 : pawnBitboard << 7 );
 	leftCaptures &= ~getFileMask( 7 );
 	leftCaptures &= capturable;
 	uint64_t leftCapturePromotions = leftCaptures & getRankMask( 7 * colorToMove );
 	leftCaptures ^= leftCapturePromotions;
 
-	uint64_t rightCaptures = ( colorToMove == EColor::Black ? pawnBitboard >> 7 : pawnBitboard << 9 );
+	uint64_t rightCaptures = ( blackToMove() ? pawnBitboard >> 7 : pawnBitboard << 9 );
 	rightCaptures &= ~getFileMask( 0 );
 	rightCaptures &= capturable;
 	uint64_t rightCapturePromotions = rightCaptures & getRankMask( 7 * colorToMove );
@@ -1575,38 +1505,38 @@ int32_t Board::getNoisies( std::array<Move, 256>& moves, int32_t totalMoves ) co
 
 	while( leftCaptures != 0 )
 	{
-		int8_t index = popLSB( leftCaptures );
-		int8_t startSquare = index + ( colorToMove == EColor::Black ? 9 : -7 );
+		const int8_t index = popLSB( leftCaptures );
+		const int8_t startSquare = index + ( blackToMove() ? 9 : -7 );
 		moves[totalMoves] = Move( startSquare, index, ( index == stateHistory.back().enPassantIndex ? EnPassant : Normal ) );
 		totalMoves++;
 	}
 
 	while( rightCaptures != 0 )
 	{
-		int8_t index = popLSB( rightCaptures );
-		int8_t startSquare = index + ( colorToMove == EColor::Black ? 7 : -9 );
+		const int8_t index = popLSB( rightCaptures );
+		const int8_t startSquare = index + ( blackToMove() ? 7 : -9 );
 		moves[totalMoves] = Move( startSquare, index, ( index == stateHistory.back().enPassantIndex ? EnPassant : Normal ) );
 		totalMoves++;
 	}
 
 	while( leftCapturePromotions != 0 )
 	{
-		int8_t index = popLSB( leftCapturePromotions );
-		int8_t startSquare = index + ( colorToMove == EColor::Black ? 9 : -7 );
-		for( int32_t piece = EPieceType::Knight; piece < EPieceType::King; piece++ )
+		const int8_t index = popLSB( leftCapturePromotions );
+		const int8_t startSquare = index + ( blackToMove() ? 9 : -7 );
+		for( EPieceType pieceType : { EPieceType::Knight, EPieceType::Bishop, EPieceType::Rook, EPieceType::Queen } )
 		{
-			moves[totalMoves] = Move( startSquare, index, promotions[piece] );
+			moves[totalMoves] = Move( startSquare, index, promotions[pieceType] );
 			totalMoves++;
 		}
 	}
 
 	while( rightCapturePromotions != 0 )
 	{
-		int8_t index = popLSB( rightCapturePromotions );
-		int8_t startSquare = index + ( colorToMove == EColor::Black ? 7 : -9 );
-		for( int32_t piece = EPieceType::Knight; piece < EPieceType::King; piece++ )
+		const int8_t index = popLSB( rightCapturePromotions );
+		const int8_t startSquare = index + ( blackToMove() ? 7 : -9 );
+		for( EPieceType pieceType : { EPieceType::Knight, EPieceType::Bishop, EPieceType::Rook, EPieceType::Queen } )
 		{
-			moves[totalMoves] = Move( startSquare, index, promotions[piece] );
+			moves[totalMoves] = Move( startSquare, index, promotions[pieceType] );
 			totalMoves++;
 		}
 	}
@@ -1616,13 +1546,13 @@ int32_t Board::getNoisies( std::array<Move, 256>& moves, int32_t totalMoves ) co
 
 int32_t Board::getQuiets( std::array<Move, 256>& moves, int32_t totalMoves ) const
 {
-	uint64_t occupiedBitboard = getOccupiedBitboard();
+	const uint64_t occupiedBitboard = getOccupiedBitboard();
 
 	if( ( stateHistory.back().castlingRights & kingRightMasks[getOtherColorToMove()] ) != 0 )
 	{
 		if( !isInCheck() )
 		{
-			if( colorToMove == EColor::White )
+			if( whiteToMove() )
 			{
 				if( ( stateHistory.back().castlingRights & 1 ) != 0 && ( occupiedBitboard & 0x60 ) == 0 && !squareIsUnderAttack( 5 ) )
 				{
@@ -1654,8 +1584,8 @@ int32_t Board::getQuiets( std::array<Move, 256>& moves, int32_t totalMoves ) con
 	uint64_t mask = stateHistory.back().coloredBitboards[colorToMove] ^ getColoredPieceBitboard( colorToMove, EPieceType::Pawn );
 	while( mask != 0 )
 	{
-		int8_t startSquare = popLSB( mask );
-		EPieceType pieceType = getType( pieceAtIndex( startSquare ) );
+		const int8_t startSquare = popLSB( mask );
+		const EPieceType pieceType = getType( pieceAtIndex( startSquare ) );
 		uint64_t total = 0;
 		if( pieceType == EPieceType::Knight )
 		{
@@ -1687,24 +1617,24 @@ int32_t Board::getQuiets( std::array<Move, 256>& moves, int32_t totalMoves ) con
 	}
 
 	// pawn pushes
-	uint64_t pawnBitboard = getColoredPieceBitboard( colorToMove, EPieceType::Pawn );
-	uint64_t emptyBitboard = ~occupiedBitboard;
+	const uint64_t pawnBitboard = getColoredPieceBitboard( colorToMove, EPieceType::Pawn );
+	const uint64_t emptyBitboard = ~occupiedBitboard;
 	uint64_t pawnPushes = getPawnPushes( pawnBitboard, emptyBitboard, colorToMove );
 	uint64_t doublePawnPushes = getDoublePawnPushes( pawnPushes, emptyBitboard, colorToMove );
 	uint64_t pawnPushPromotions = pawnPushes & getRankMask( 7 * colorToMove );
 	pawnPushes ^= pawnPushPromotions;
 	while( pawnPushes != 0 )
 	{
-		int8_t index = popLSB( pawnPushes );
-		int8_t startSquare = index + directionalOffsets[colorToMove];
+		const int8_t index = popLSB( pawnPushes );
+		const int8_t startSquare = index + directionalOffsets[colorToMove];
 		moves[totalMoves] = Move( startSquare, index, Normal );
 		totalMoves++;
 	}
 
 	while( doublePawnPushes != 0 )
 	{
-		int8_t index = popLSB( doublePawnPushes );
-		int8_t startSquare = index + ( directionalOffsets[colorToMove] << 1 );
+		const int8_t index = popLSB( doublePawnPushes );
+		const int8_t startSquare = index + ( directionalOffsets[colorToMove] << 1 );
 		assert( getType( pieceAtIndex( startSquare ) ) == EPieceType::Pawn );
 		moves[totalMoves] = Move( startSquare, index, DoublePawnPush );
 		totalMoves++;
@@ -1712,11 +1642,11 @@ int32_t Board::getQuiets( std::array<Move, 256>& moves, int32_t totalMoves ) con
 
 	while( pawnPushPromotions != 0 )
 	{
-		int8_t index = popLSB( pawnPushPromotions );
-		int8_t startSquare = index + directionalOffsets[colorToMove];
-		for( int32_t piece = EPieceType::Knight; piece < EPieceType::King; piece++ )
+		const int8_t index = popLSB( pawnPushPromotions );
+		const int8_t startSquare = index + directionalOffsets[colorToMove];
+		for( EPieceType pieceType : { EPieceType::Knight, EPieceType::Bishop, EPieceType::Rook, EPieceType::Queen } )
 		{
-			moves[totalMoves] = Move( startSquare, index, promotions[piece] );
+			moves[totalMoves] = Move( startSquare, index, promotions[pieceType] );
 			totalMoves++;
 		}
 	}
