@@ -1,0 +1,98 @@
+﻿root = true
+# EditorConfig is awesome:http://EditorConfig.org
+
+# top-most EditorConfig file
+
+# Baseline
+[*]
+charset = utf-8-bom
+indent_style = tab
+trim_trailing_whitespace = true
+max_line_length = 256
+disable_space_changes_before_trailing_comment = false
+
+space_after_cast = false
+space_after_colon_in_case = true
+space_after_colon_in_inheritance_clause = true
+space_after_comma = true
+space_after_for_colon = true
+space_after_keywords_in_control_flow_statements = false
+space_after_ptr_in_data_member = true
+space_after_ptr_in_data_members = true
+space_after_ptr_in_method = true
+space_after_semicolon_in_for_statement = true
+space_after_ternary_colon = true
+space_after_ternary_quest = true
+
+space_around_alias_eq = true
+space_around_assignment_operator = true
+space_around_binary_operator = true
+space_around_deref_in_trailing_return_type = false
+space_around_member_access_operator = false
+
+space_before_colon_in_case = false
+space_before_colon_in_inheritance_clause = true
+space_before_comma = false
+space_before_for_colon = true
+space_before_initializer_braces = false
+space_before_open_square_brackets = false
+space_before_ptr_in_data_member = false
+space_before_ptr_in_data_members = false
+space_before_ptr_in_method = false
+space_before_semicolon_in_for_statement = false
+space_before_template_args = false
+space_before_template_params = false
+space_before_ternary_colon = true
+space_before_ternary_quest = true
+space_before_trailing_comment = true
+
+space_between_closing_angle_brackets_in_template_args = false
+space_between_method_declaration_parameter_list_parentheses = true
+space_between_method_declaration_empty_parameter_list_parentheses = false
+space_between_method_call_empty_parameter_list_parentheses = false
+space_between_method_call_name_and_opening_parenthesis = false
+space_between_method_call_parameter_list_parentheses = true
+space_between_method_declaration_name_and_open_parenthesis = false
+space_between_parentheses_of_control_flow_statements = true
+space_between_square_brackets = false
+space_between_typecast_parentheses = true
+
+space_within_empty_initializer_braces = false
+space_within_empty_template_params = false
+space_within_initializer_braces = true
+space_within_parentheses = true
+space_within_template_params = false
+space_within_template_args = false
+
+# ReSharper properties
+resharper_linkage_specification_braces = next_line
+resharper_space_after_keywords_in_control_flow_statements = false
+resharper_space_after_ptr_in_data_members = true
+resharper_space_around_deref_in_trailing_return_type = false
+resharper_space_before_ptr_in_data_members = false
+resharper_space_before_template_params = false
+resharper_space_between_method_call_parameter_list_parentheses = true
+resharper_space_between_method_declaration_parameter_list_parentheses = true
+resharper_space_between_parentheses_of_control_flow_statements = true
+resharper_space_between_typecast_parentheses = true
+resharper_space_within_initializer_braces = true
+resharper_space_within_parentheses = true
+resharper_use_indent_from_vs = false
+
+# ReSharper inspection severities
+resharper_cpp_clang_tidy_modernize_use_nodiscard_highlighting = none
+
+# MSBuild
+[*.{csproj,proj,projitems,shproj,fsproj,target,props}]
+indent_style = space
+indent_size = 2
+
+# XML config files
+[*.{config,nuspec,resx}]
+indent_style = space
+indent_size = 2
+
+[*.{appxmanifest,axaml,axml,blockshader,build,c,c++,c++m,cc,ccm,cginc,compute,config,cp,cpp,cppm,csproj,cu,cuh,cxx,cxxm,dbml,discomap,dtd,fx,fxh,h,h++,hh,hlsl,hlsli,hlslinc,hp,hpp,hxx,icc,inc,inl,ino,ipp,ixx,jsproj,lsproj,mpp,mq4,mq5,mqh,mxx,njsproj,nuspec,paml,proj,props,resw,resx,shaderFoundry,StyleCop,targets,tasks,tcc,tpp,urtshader,usf,ush,vbproj,xaml,xamlx,xml,xoml,xsd}]
+indent_style = tab
+indent_size = tab
+tab_width = 4
