@@ -1,0 +1,7 @@
+.lore/
+.vs/
+enc_temp_folder/
+Intermediate/
+Binaries/
+coverage/
+*.vcxproj.user
